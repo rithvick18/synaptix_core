@@ -13,6 +13,12 @@ export interface WorldSource {
   hintTargets: Record<string, THREE.Object3D>
   spawn: { position: THREE.Vector3; yaw: number }
   roomOf(point: THREE.Vector3): string | null
+
+  /**
+   * Optional. Worlds with moving parts — swinging doors — advance them here, once per
+   * frame. Worlds made only of static geometry omit it.
+   */
+  update?(dt: number): void
 }
 
 export const REQUIRED_ROOMS = ['livingRoom', 'kitchen'] as const
@@ -34,10 +40,45 @@ export function assertWorldContract(world: WorldSource): void {
   if (missing.length) throw new Error(`World contract violated, missing: ${missing.join(', ')}`)
 }
 
-/** Tag an object so Interaction.ts can resolve a mesh hit up to its owner. */
-export const INTERACTABLE_ID = 'smritiInteractableId'
+/**
+ * What an interactable carries. Stored in `userData` under one key so the §1 interface
+ * stays a plain `Record<string, Object3D>` and Interaction.ts can resolve a mesh hit up
+ * the parent chain to the owning object without knowing what kind of prop it is.
+ */
+export interface InteractableMeta {
+  id: string
+  /** Player-facing noun, e.g. "kitchen door". Ids are never shown to the player. */
+  label: string
+  /** Player-facing verb for the centre prompt. Dynamic so doors can say Open / Close. */
+  verb: () => string
+  /** Runs on E. Returns a short action name for the event log, or null if it did nothing. */
+  activate?: () => string | null
+  /**
+   * Blockers belonging to this object itself. §5.2's occlusion loop must skip them —
+   * a closed door is both the raycast target and a blocker, and would occlude itself.
+   */
+  ownBlockers?: THREE.Box3[]
+}
 
-export function tagInteractable(object: THREE.Object3D, id: string): THREE.Object3D {
-  object.userData[INTERACTABLE_ID] = id
+const META_KEY = 'smritiMeta'
+
+export function tagInteractable(object: THREE.Object3D, meta: InteractableMeta): THREE.Object3D {
+  object.userData[META_KEY] = meta
   return object
+}
+
+export function readMeta(object: THREE.Object3D): InteractableMeta | null {
+  const meta = object.userData[META_KEY]
+  return meta && typeof meta.id === 'string' ? (meta as InteractableMeta) : null
+}
+
+/** Walk the parent chain to the tagged owner (§5.2). */
+export function resolveMeta(hit: THREE.Object3D): { meta: InteractableMeta; object: THREE.Object3D } | null {
+  let node: THREE.Object3D | null = hit
+  while (node) {
+    const meta = readMeta(node)
+    if (meta) return { meta, object: node }
+    node = node.parent
+  }
+  return null
 }

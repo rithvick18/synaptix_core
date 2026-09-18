@@ -40,8 +40,13 @@ interface WorldSource {
   hintTargets: Record<string, THREE.Object3D>     // id → object, e.g. 'kitchenDoor'
   spawn: { position: THREE.Vector3; yaw: number }
   roomOf(point: THREE.Vector3): string | null     // containment test, not entry event
+  update?(dt: number): void                       // optional; worlds with moving parts
 }
 ```
+
+`update` is optional and exists for worlds with moving geometry — swinging doors. Static
+worlds omit it. The game loop calls it before the player moves, so collision and the
+interaction raycast both see where a door actually is this frame.
 
 **Required IDs — every implementation must provide all of them.** Coordinates, geometry and
 blockers may differ freely; the ids may not.
@@ -55,12 +60,41 @@ blockers may differ freely; the ids may not.
 
 A pack referencing an id absent from the active world is a load-time rejection (§5.2).
 
+**Required is a floor, not a ceiling.** A world may provide more rooms and more
+interactables than the table lists; a pack may only rely on the ones above.
+`proceduralHouse.ts` currently also provides the rooms `bedroom`, `bathroom` and
+`hallway`, and the interactables `frontDoor`, `bedroomDoor` and `bathroomDoor`.
+
 ### 1.1 `proceduralHouse.ts` — the default, built first
 
-Boxes and planes with Poly Haven PBR materials, two connected rooms, a passable doorway.
+Boxes and planes with Poly Haven PBR materials, connected rooms, passable doorways.
 **Primitive-built scenery and props are explicitly permitted** — the "no custom modelling"
 rule bans Blender work, not `BoxGeometry`. The jug may be a lathe or cylinder+torus
 primitive; it needs to be recognisable, not beautiful.
+
+**Current plan — five rooms around a central hallway.** Interior x ∈ [-6, 6],
+z ∈ [-5, 5], ceiling 2.7 m. The player spawns on the path outside and enters through the
+front door.
+
+| Room | Extent | Reached from |
+| --- | --- | --- |
+| `hallway` | x [-1.2, 1.2], z [-5, 5] | front door |
+| `kitchen` | x [1.2, 6], z [-5, -0.4] | hallway door, and an arch to the living room |
+| `livingRoom` | x [1.2, 6], z [-0.4, 5] | hallway arch, and an arch to the kitchen |
+| `bedroom` | x [-6, -1.2], z [-5, 0.8] | hallway door |
+| `bathroom` | x [-6, -1.2], z [0.8, 5] | hallway door |
+
+`livingRoom` and `kitchen` are directly connected by their shared arch as well as through
+the hallway, so §1's "two connected rooms" holds without the hallway in the path.
+
+**Doors.** `frontDoor`, `kitchenDoor`, `bedroomDoor` and `bathroomDoor` are hinged and
+open on E. Each keeps one `Box3` in `world.blockers` by identity and swaps its contents
+between the doorway volume when shut and the swung slab's measured AABB when open, so a
+shut door cannot be walked through and an open one cannot be walked into. The living
+room and kitchen arches have no slab.
+
+Walls are generated from runs plus openings rather than written out segment by segment —
+hand-placed segments are how doorways end up one wall-thickness out of position.
 
 **Degradation contract — the fallback must itself have a fallback:**
 
@@ -100,15 +134,26 @@ no state library.
 
 ### Scope
 
-**IN** — one `WorldSource` with two connected rooms · walk + look + interact + hint + pause +
-skip + restart · fixed 1.6 m camera height, **no gravity** · separate blockers and triggers ·
-raycast interaction with distance limit and occlusion check · state machine · one mission
+**IN** — one `WorldSource` with at least two connected rooms · walk + look + interact +
+hint + pause + skip + restart · fixed 1.6 m camera height, **no gravity** · separate
+blockers and triggers · raycast interaction with distance limit and occlusion check ·
+**hinged doors the player opens with E** · state machine · one mission
 (navigate → find → recall) · three hint levels + skip · two memory packs with distinct real
 media · HDRI + PMREM + ACES · loading screen · telemetry, summary, JSON export · deployed
 
-**OUT** — exterior world · openable doors · physics · NPCs · Blender modelling ·
-KTX2/Draco *pipeline* · backend calls · localisation · CV/EEG · bloom · SSAO · `OutlinePass` ·
-head bob · gravity · second mission until the core is stable
+**OUT** — an exterior *world* beyond the fenced garden the house stands in · physics ·
+NPCs · Blender modelling · KTX2/Draco *pipeline* · backend calls · localisation · CV/EEG ·
+bloom · SSAO · `OutlinePass` · head bob · gravity · second mission until the core is stable
+
+Two boundaries moved on 2026-09-19, at the product owner's request, and the reasons are
+recorded here so they are not re-litigated:
+
+- **Openable doors moved from OUT to IN.** Entering the home through its own front door is
+  part of the felt experience the prototype is for. Doors are animation plus a swapped
+  bounding box — no physics engine, so the "no physics" rule is untouched.
+- **A porch, path and fenced garden are permitted.** Not an exterior world: a bounded
+  yard that exists so the front door has an outside. No streets, no neighbours, nothing
+  beyond the fence.
 
 ---
 
@@ -281,11 +326,17 @@ Blockers are bounding boxes, not scene meshes:
 ```ts
 const hit = new THREE.Vector3()
 for (const box of world.blockers) {
+  if (own?.includes(box)) continue                 // see below
   if (raycaster.ray.intersectBox(box, hit)) {
     if (raycaster.ray.origin.distanceTo(hit) < targetDistance) return null  // occluded
   }
 }
 ```
+
+**An interactable that is also a blocker must skip its own box.** A shut door is both the
+raycast target and a solid; without the `own` check every door occludes itself and can
+never be focused. Interactables declare their own blockers in the metadata Interaction.ts
+resolves up the parent chain.
 
 ### 5.3 Highlight
 

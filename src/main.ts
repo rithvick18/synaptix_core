@@ -66,15 +66,11 @@ async function boot(): Promise<void> {
     }
   })
 
-  const startMessages = [
+  ui.showMessage('Smriti — Checkpoint A', [
     'Walk with <b>W A S D</b>, look with the mouse.',
-    'Go through the doorway to the kitchen and look at the water jug.'
-  ]
-  ui.showMessage(
-    'Smriti — Checkpoint A',
-    startMessages,
-    'Click to start · Esc pauses · E interacts'
-  )
+    'Walk up to the front door and press <b>E</b> to open it.',
+    'Five rooms inside: hallway, living room, kitchen, bedroom, bathroom.'
+  ], 'Click to start · Esc pauses · E opens doors and interacts')
 
   const resume = (): void => {
     if (state.current === 'paused') {
@@ -93,14 +89,16 @@ async function boot(): Promise<void> {
   document.addEventListener('keydown', (e) => {
     if (e.code === 'KeyE' && state.current === 'exploring' && interaction.focus) {
       // Checkpoint A's interaction: log an event. The mission runner consumes this in B.
+      const result = interaction.activate()
       const event = {
         t: Math.round(state.elapsed()),
         kind: 'object_interact' as const,
-        id: interaction.focus.id,
+        id: interaction.focus.meta.id,
+        action: result?.action ?? 'look',
         correct: true
       }
       console.log('[smriti] interact', event)
-      ui.log(`interact · ${event.id} · t=${(event.t / 1000).toFixed(1)}s`)
+      ui.log(`interact · ${event.id} · ${event.action} · t=${(event.t / 1000).toFixed(1)}s`)
     }
   })
 
@@ -120,6 +118,9 @@ async function boot(): Promise<void> {
     last = now
 
     const dt = Math.min(clock.getDelta(), 0.05)
+    // Worlds with moving parts (doors) advance first, so collision and the raycast this
+    // frame both see where the door actually is.
+    world.update?.(dt)
     player.update(dt)
 
     const room = world.roomOf(player.groundPoint(feet))
@@ -175,7 +176,7 @@ async function boot(): Promise<void> {
     ui.setHud(
       `state <b>${state.current}</b> · room <b>${currentRoom ?? '—'}</b> · ` +
         `t <b>${(state.elapsed() / 1000).toFixed(1)}s</b>` +
-        (focus ? ` · focus <b>${focus.id}</b>` : '')
+        (focus ? ` · focus <b>${focus.meta.id}</b>` : '')
     )
   }
 

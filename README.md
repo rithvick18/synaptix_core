@@ -4,6 +4,14 @@ First-person cognitive-care prototype (SIH26003). This checkpoint covers SPEC.md
 only: scaffold, renderer, procedural world, movement, one interaction. No mission runner,
 no memory packs, no telemetry recording — those are Checkpoints B–D.
 
+## The house
+
+Five rooms around a central hallway — `hallway`, `livingRoom`, `kitchen`, `bedroom`,
+`bathroom` — inside a fenced garden with a path and porch. You start outside, open the
+front door with **E**, and walk in. The kitchen, bedroom and bathroom doors open the same
+way; the living room is reached through an open arch, and a second arch connects it
+directly to the kitchen.
+
 ## Run
 
 ```bash
@@ -20,7 +28,7 @@ npm run preview    # serve dist/ on http://localhost:4173
 | Click | Lock the pointer and start |
 | W A S D / arrows | Walk |
 | Mouse | Look |
-| E | Interact with the focused object (logs an event) |
+| E | Open or close the focused door, or interact with the focused object (logs an event) |
 | Esc | Release the pointer — this pauses and stops the clock (SPEC.md §5.1) |
 
 ## Version pin (SPEC.md §0)
