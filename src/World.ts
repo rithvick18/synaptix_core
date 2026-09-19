@@ -17,8 +17,11 @@ export interface WorldSource {
   /**
    * Optional. Worlds with moving parts — swinging doors — advance them here, once per
    * frame. Worlds made only of static geometry omit it.
+   *
+   * Returns true if anything actually moved this frame. The loop uses that to refresh
+   * shadow maps only when they can have changed; see Renderer.ts.
    */
-  update?(dt: number): void
+  update?(dt: number): boolean
 }
 
 export const REQUIRED_ROOMS = ['livingRoom', 'kitchen'] as const

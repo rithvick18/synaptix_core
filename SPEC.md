@@ -72,17 +72,22 @@ Boxes and planes with Poly Haven PBR materials, connected rooms, passable doorwa
 rule bans Blender work, not `BoxGeometry`. The jug may be a lathe or cylinder+torus
 primitive; it needs to be recognisable, not beautiful.
 
-**Current plan — five rooms around a central hallway.** Interior x ∈ [-6, 6],
-z ∈ [-5, 5], ceiling 2.7 m. The player spawns on the path outside and enters through the
+**Current plan — five rooms around a central hallway.** Interior x ∈ [-7.5, 7.5],
+z ∈ [-6, 6], ceiling 2.7 m. The player spawns on the path outside and enters through the
 front door.
 
 | Room | Extent | Reached from |
 | --- | --- | --- |
-| `hallway` | x [-1.2, 1.2], z [-5, 5] | front door |
-| `kitchen` | x [1.2, 6], z [-5, -0.4] | hallway door, and an arch to the living room |
-| `livingRoom` | x [1.2, 6], z [-0.4, 5] | hallway arch, and an arch to the kitchen |
-| `bedroom` | x [-6, -1.2], z [-5, 0.8] | hallway door |
-| `bathroom` | x [-6, -1.2], z [0.8, 5] | hallway door |
+| `hallway` | x [-1.3, 1.3], z [-6, 6] | front door |
+| `kitchen` | x [1.3, 7.5], z [-6, -0.5] | hallway door, and an arch to the living room |
+| `livingRoom` | x [1.3, 7.5], z [-0.5, 6] | hallway arch, and an arch to the kitchen |
+| `bedroom` | x [-7.5, -1.3], z [-6, 0.8] | hallway door |
+| `bathroom` | x [-7.5, -1.3], z [0.8, 6] | hallway door |
+
+**Everything in `layout.ts` is written relative to the wall constants**, not as absolute
+coordinates — furniture as offsets from the wall face it stands against, doors as offsets
+from room centres. The house is resized by editing `X0`/`X1`/`Z0`/`Z1` and the dividers;
+the contents follow instead of drifting into the middle of the floor.
 
 `livingRoom` and `kitchen` are directly connected by their shared arch as well as through
 the hallway, so §1's "two connected rooms" holds without the hallway in the path.
@@ -110,6 +115,12 @@ silently impassable — the wall is clear, the door swings, the player still can
 through, and a screenshot shows nothing wrong. Clearance is measured, never eyeballed.
 This caught a fridge behind the kitchen door, a dresser behind the bedroom door, a plant
 and a towel rail in the bathroom doorway, and a side table in the living room arch.
+
+**`auditReachability` is the second half of the same idea.** It flood-fills the walkable
+floor from spawn with every door open and reports, per room, the fraction of open floor
+the player can actually reach and how many of the room's four corners they can stand in.
+Getting *into* a room is not the same as being able to move *around* it. It caught a
+strip of bedroom floor sealed behind the bed. Both audits must report clean.
 
 **Degradation contract — the fallback must itself have a fallback:**
 
@@ -412,6 +423,13 @@ resolution, `pixelRatio`, browser and machine.
 
 If the tool cannot run a browser, it reports **"unmeasured"** and lists this as a manual task.
 It must not state an FPS figure it did not measure.
+
+**A frame time pinned to a multiple of the refresh interval is a v-sync reading, not a
+cost.** 16.7 ms and 33.3 ms mean "the display is 60 Hz / 30 Hz and we met the deadline" —
+they say nothing about headroom, and macOS drops the panel to 30 Hz on low battery. When
+frame time sits exactly on a refresh multiple, measure the real cost separately: render
+in a tight loop outside `requestAnimationFrame`, with `gl.finish()` to drain the GPU, and
+report that alongside. Check the cap by timing `requestAnimationFrame` on a blank page.
 
 ---
 

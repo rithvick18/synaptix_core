@@ -49,6 +49,7 @@ async function boot(): Promise<void> {
   ])
   assertWorldContract(world)
   renderer.scene.add(world.root)
+  renderer.refreshShadows()
 
   const player = new Player(renderer.camera, renderer.renderer.domElement, state, world.blockers)
   player.teleport(world.spawn.position, world.spawn.yaw)
@@ -119,8 +120,8 @@ async function boot(): Promise<void> {
 
     const dt = Math.min(clock.getDelta(), 0.05)
     // Worlds with moving parts (doors) advance first, so collision and the raycast this
-    // frame both see where the door actually is.
-    world.update?.(dt)
+    // frame both see where the door actually is. Shadow maps are static otherwise.
+    if (world.update?.(dt)) renderer.refreshShadows()
     player.update(dt)
 
     const room = world.roomOf(player.groundPoint(feet))

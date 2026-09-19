@@ -90,6 +90,7 @@ export interface HouseBuildReport {
   texturesLoaded: string[]
   texturesFailed: string[]
   doorways: DoorwayReport[]
+  reachability: ReachabilityReport[]
 }
 
 type MapTriplet = { map: THREE.Texture; roughnessMap: THREE.Texture; normalMap: THREE.Texture }
@@ -299,9 +300,10 @@ class Door {
     return this.open ? 'open' : 'close'
   }
 
-  update(dt: number): void {
+  /** Returns true while the slab is actually swinging. */
+  update(dt: number): boolean {
     const target = this.open ? 1 : 0
-    if (this.amount === target) return
+    if (this.amount === target) return false
     const step = dt / SWING_SECONDS
     this.amount = target > this.amount
       ? Math.min(target, this.amount + step)
@@ -309,6 +311,7 @@ class Door {
     this.pivot.rotation.y = this.baseYaw + this.spec.swing * OPEN_ANGLE * this.amount
     // Past half-swing the doorway is clear and the slab is what stands in the room.
     this.blocker.copy(this.amount < 0.5 ? this.closedBox : this.openBox)
+    return true
   }
 }
 
@@ -702,6 +705,112 @@ export function auditDoorways(
   })
 }
 
+export interface ReachabilityReport {
+  room: string
+  /** Fraction of the room's player-sized open floor actually reachable from spawn. */
+  reachable: number
+  openCells: number
+  /** How many of the room's four corners the player can stand in, 0-4. */
+  cornersReached: number
+}
+
+/**
+ * Flood-fills the walkable floor from the spawn point with every door open, and reports
+ * how much of each room the player can actually get to.
+ *
+ * The doorway audit proves you can get *into* a room. This proves you can move *around*
+ * in it — that furniture has not walled off a corner, and that no pocket of floor is
+ * cut off from the rest of the house.
+ */
+export function auditReachability(
+  blockers: THREE.Box3[],
+  doors: Map<string, Door>,
+  spawn: THREE.Vector3
+): ReachabilityReport[] {
+  const STEP = 0.25
+  const minX = -16, maxX = 16, minZ = -14, maxZ = 18
+  const nx = Math.ceil((maxX - minX) / STEP)
+  const nz = Math.ceil((maxZ - minZ) / STEP)
+
+  // Doors count as open: a shut door is not a permanent obstacle.
+  const live = new Set([...doors.values()].map((d) => d.blocker))
+  const consider = blockers.filter((b) => !live.has(b))
+  for (const d of doors.values()) consider.push(d.openBox)
+
+  const body = new THREE.Box3()
+  const open = new Uint8Array(nx * nz)
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < nz; j++) {
+      const x = minX + i * STEP
+      const z = minZ + j * STEP
+      body.min.set(x - PLAYER_RADIUS, PLAYER_BODY_MIN_Y, z - PLAYER_RADIUS)
+      body.max.set(x + PLAYER_RADIUS, PLAYER_BODY_MAX_Y, z + PLAYER_RADIUS)
+      let free = 1
+      for (const b of consider) if (body.intersectsBox(b)) { free = 0; break }
+      open[i * nz + j] = free
+    }
+  }
+
+  const seen = new Uint8Array(nx * nz)
+  const si = Math.round((spawn.x - minX) / STEP)
+  const sj = Math.round((spawn.z - minZ) / STEP)
+  const queue = [si * nz + sj]
+  seen[si * nz + sj] = 1
+  while (queue.length) {
+    const c = queue.pop()!
+    const i = Math.floor(c / nz)
+    const j = c % nz
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const ni = i + di
+      const nj = j + dj
+      if (ni < 0 || nj < 0 || ni >= nx || nj >= nz) continue
+      const n = ni * nz + nj
+      if (seen[n] || !open[n]) continue
+      seen[n] = 1
+      queue.push(n)
+    }
+  }
+
+  return ROOMS.map((room) => {
+    let openCells = 0
+    let reached = 0
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < nz; j++) {
+        const x = minX + i * STEP
+        const z = minZ + j * STEP
+        if (x < room.min[0] || x > room.max[0] || z < room.min[2] || z > room.max[2]) continue
+        if (!open[i * nz + j]) continue
+        openCells++
+        if (seen[i * nz + j]) reached++
+      }
+    }
+    // A corner counts as reached if any open, reached cell sits within 0.75 m of it.
+    const corners: [number, number][] = [
+      [room.min[0], room.min[2]], [room.max[0], room.min[2]],
+      [room.min[0], room.max[2]], [room.max[0], room.max[2]]
+    ]
+    let cornersReached = 0
+    for (const [cx, cz] of corners) {
+      let ok = false
+      for (let i = 0; i < nx && !ok; i++) {
+        for (let j = 0; j < nz && !ok; j++) {
+          if (!seen[i * nz + j]) continue
+          const x = minX + i * STEP
+          const z = minZ + j * STEP
+          if (Math.abs(x - cx) <= 0.75 && Math.abs(z - cz) <= 0.75) ok = true
+        }
+      }
+      if (ok) cornersReached++
+    }
+    return {
+      room: room.id,
+      reachable: openCells ? +(reached / openCells).toFixed(3) : 0,
+      openCells,
+      cornersReached
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
@@ -772,7 +881,7 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
     // than 6 m gets two fittings — one cone cannot reach both ends of the hallway.
     const along: 'x' | 'z' = w >= d ? 'x' : 'z'
     const length = Math.max(w, d)
-    const offsets = length > 6 ? [-length / 4, length / 4] : [0]
+    const offsets = length > 7 ? [-length / 4, length / 4] : [0]
     for (const off of offsets) {
       const lx = along === 'x' ? cx + off : cx
       const lz = along === 'z' ? cz + off : cz
@@ -798,9 +907,13 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
 
   // ---- Walls and furniture ----
   for (const spec of [...WALLS, ...FURNITURE]) {
-    const mesh = boxMesh(spec, mats)
-    if (spec.surface === 'wall' && spec.id.startsWith('ext-')) mesh.castShadow = true
-    root.add(mesh)
+    // `invisible` specs are blockers only — props whose visible form is built from
+    // primitives further down (the toilet).
+    if (!spec.invisible) {
+      const mesh = boxMesh(spec, mats)
+      if (spec.surface === 'wall' && spec.id.startsWith('ext-')) mesh.castShadow = true
+      root.add(mesh)
+    }
     if (spec.blocking !== false) {
       blockers.push(new THREE.Box3(new THREE.Vector3(...spec.min), new THREE.Vector3(...spec.max)))
     }
@@ -863,9 +976,6 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
     prop.name = spec.id
     root.add(prop)
   }
-  // The toilet is the one prop big enough to walk into.
-  blockers.push(new THREE.Box3(new THREE.Vector3(-5.85, 0, 1.44), new THREE.Vector3(-5.2, 0.75, 1.96)))
-
   // ---- Doors ----
   const doors = new Map<string, Door>()
   const interactables: Record<string, THREE.Object3D> = {}
@@ -948,8 +1058,11 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
       for (const t of triggers) if (t.box.containsPoint(point)) return t.room
       return null
     },
-    update(dt: number): void {
-      for (const door of doors.values()) door.update(dt)
+    update(dt: number): boolean {
+      let moved = false
+      // Every door is stepped; `some` would short-circuit and freeze the rest.
+      for (const door of doors.values()) if (door.update(dt)) moved = true
+      return moved
     }
   }
 
@@ -962,5 +1075,14 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
     )
   }
 
-  return { world, report: { texturesLoaded, texturesFailed, doorways } }
+  const reachability = auditReachability(blockers, doors, spawnPos)
+  const cutOff = reachability.filter((r) => r.reachable < 0.98 || r.cornersReached < 4)
+  if (cutOff.length) {
+    console.warn(
+      '[smriti] rooms with unreachable floor:',
+      cutOff.map((r) => `${r.room} ${(r.reachable * 100).toFixed(0)}% corners ${r.cornersReached}/4`).join(', ')
+    )
+  }
+
+  return { world, report: { texturesLoaded, texturesFailed, doorways, reachability } }
 }

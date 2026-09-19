@@ -36,6 +36,10 @@ export class Renderer {
     this.renderer.toneMappingExposure = 1.0
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFShadowMap
+    // The house is static apart from its doors, and there are enough shadow-casting
+    // lights that re-rendering every shadow map each frame halved the frame rate.
+    // The loop calls `refreshShadows()` once at start-up and again while a door swings.
+    this.renderer.shadowMap.autoUpdate = false
     canvasParent.appendChild(this.renderer.domElement)
 
     this.scene = new THREE.Scene()
@@ -118,6 +122,11 @@ export class Renderer {
     this.camera.aspect = window.innerWidth / window.innerHeight
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(window.innerWidth, window.innerHeight)
+  }
+
+  /** Re-render every shadow map on the next frame. Cheap to call; costly to call often. */
+  refreshShadows(): void {
+    this.renderer.shadowMap.needsUpdate = true
   }
 
   render(): void {
