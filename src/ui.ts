@@ -1,10 +1,37 @@
 /**
  * SPEC.md §3 — HUD, hints, answer cards, loader, summary.
  *
- * Checkpoint A needs only the loader, the crosshair, the centre interaction prompt, the
- * state/room HUD and the performance readout. Hints, answer cards and the summary arrive
- * with Checkpoints B–D; nothing here presumes their shape.
+ * Checkpoint A brought the loader, crosshair, centre prompt, state HUD and perf readout.
+ * Checkpoint B adds the mission furniture: the instruction banner, the hint line, the
+ * recall answer card and the completion screen.
+ *
+ * Two rules from §5.4 shape everything below and are worth stating where the markup is:
+ * **nothing ever shows "wrong", a red cross, a countdown or a score**, and the answer
+ * card is the one part of the HUD that takes pointer events, because §5.1 releases the
+ * pointer on purpose to let the player click it.
  */
+
+export interface ChoiceCard {
+  id: string
+  name: string
+  relationship: string
+}
+
+export interface AnswerCardOptions {
+  question: string
+  choices: ChoiceCard[]
+  /** Set once level-3 guidance has revealed the answer (§5.4). Never marks anything wrong. */
+  revealedId?: string | null
+  /**
+   * A neutral line under the choices — never "wrong", never a count of attempts (§5.4).
+   * A hint, once shown, takes this slot instead.
+   */
+  note?: string | null
+  onSelect: (id: string) => void
+  onSkip: () => void
+  /** Shown only after a reveal — the acknowledgement that ends the step as `revealed`. */
+  onContinue?: () => void
+}
 
 const STYLE = `
 * { box-sizing: border-box; }
@@ -22,7 +49,7 @@ canvas { display: block; }
   border: 1px solid rgba(255,255,255,.14); white-space: nowrap; opacity: 0;
   transition: opacity .12s ease; font-size: 14px; }
 #prompt.show { opacity: 1; }
-#prompt kbd { display: inline-block; min-width: 20px; padding: 1px 5px; margin-right: 6px;
+#prompt kbd, .keycap { display: inline-block; min-width: 20px; padding: 1px 5px; margin-right: 6px;
   border-radius: 4px; background: #f2efe9; color: #14161a; font: 600 12px/1.5 inherit;
   text-align: center; }
 #hudTop { position: absolute; top: 14px; left: 14px; padding: 9px 12px; border-radius: 10px;
@@ -32,17 +59,76 @@ canvas { display: block; }
 #perf { position: absolute; top: 14px; right: 14px; padding: 9px 12px; border-radius: 10px;
   background: rgba(16,17,20,.7); border: 1px solid rgba(255,255,255,.1);
   font-variant-numeric: tabular-nums; text-align: right; white-space: pre; font-size: 12px; }
-#log { position: absolute; bottom: 14px; left: 14px; max-width: 46ch; display: flex;
+#log { position: absolute; bottom: 60px; left: 14px; max-width: 46ch; display: flex;
   flex-direction: column; gap: 5px; }
 #log div { padding: 6px 10px; border-radius: 8px; background: rgba(16,17,20,.72);
   border: 1px solid rgba(255,255,255,.1); font-size: 12.5px; }
+
+/* --- Mission banner: the current instruction, always on screen while exploring --- */
+#mission { position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
+  width: min(560px, calc(100vw - 48px)); display: flex; flex-direction: column;
+  align-items: center; gap: 8px; text-align: center; }
+#mission[hidden] { display: none; }
+#instruction { padding: 11px 20px; border-radius: 12px; background: rgba(16,17,20,.82);
+  border: 1px solid rgba(255,255,255,.14); font-size: 17px; line-height: 1.35; }
+#instruction .step { display: block; margin-bottom: 3px; font-size: 11.5px;
+  letter-spacing: .09em; text-transform: uppercase; color: #8d8880; }
+#hint { padding: 9px 16px; border-radius: 10px; background: rgba(255,217,138,.13);
+  border: 1px solid rgba(255,217,138,.35); color: #ffe7b4; font-size: 14.5px; }
+#hint[hidden] { display: none; }
+
+/* --- Controls pill: skip is always available (§5.4) --- */
+#controls { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  padding: 7px 13px; border-radius: 999px; background: rgba(16,17,20,.7);
+  border: 1px solid rgba(255,255,255,.1); font-size: 12.5px; color: #b5b0a6; }
+#controls[hidden] { display: none; }
+
+/* --- Answer card: the only pointer-interactive part of the HUD (§5.1) --- */
+#answer { position: fixed; inset: 0; z-index: 4; display: grid; place-items: center;
+  padding: 24px; pointer-events: auto; background: rgba(8,9,11,.55);
+  backdrop-filter: blur(2px); }
+#answer[hidden] { display: none; }
+#answer .sheet { width: min(680px, 100%); padding: 26px 26px 20px; border-radius: 18px;
+  background: rgba(20,22,26,.96); border: 1px solid rgba(255,255,255,.13);
+  box-shadow: 0 24px 70px rgba(0,0,0,.5); text-align: center; }
+#answer h2 { margin: 0 0 18px; font-size: 22px; font-weight: 600; line-height: 1.3;
+  letter-spacing: -.01em; }
+#answer .choices { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+#answer button.choice { flex: 1 1 170px; max-width: 220px; padding: 18px 14px;
+  border-radius: 14px; border: 1px solid rgba(255,255,255,.16); background: #23262c;
+  color: #f2efe9; font: inherit; cursor: pointer; text-align: center;
+  transition: transform .12s ease, border-color .12s ease, background .12s ease; }
+#answer button.choice:hover { transform: translateY(-2px); border-color: rgba(255,217,138,.6);
+  background: #2a2e35; }
+#answer button.choice .name { display: block; font-size: 18px; font-weight: 600; }
+#answer button.choice .rel { display: block; margin-top: 3px; font-size: 13px; color: #b5b0a6; }
+/* The reveal marks the answer. There is no counterpart for a wrong choice, by design. */
+#answer button.choice.revealed { border-color: #ffd98a; background: #33302a; }
+#answer button.choice .tag { display: none; }
+#answer button.choice.revealed .tag { display: block; margin-top: 8px; font-size: 11.5px;
+  letter-spacing: .08em; text-transform: uppercase; color: #ffd98a; }
+#answer .note { margin: 18px 0 0; min-height: 1.45em; color: #ffe7b4; font-size: 14.5px; }
+#answer .actions { margin-top: 16px; display: flex; justify-content: center; gap: 10px; }
+#answer .actions button { padding: 9px 18px; border-radius: 10px; font: inherit;
+  cursor: pointer; border: 1px solid rgba(255,255,255,.18); background: transparent;
+  color: #b5b0a6; }
+#answer .actions button:hover { color: #f2efe9; border-color: rgba(255,255,255,.35); }
+#answer .actions button.primary { background: #ffd98a; border-color: #ffd98a; color: #14161a;
+  font-weight: 600; }
+
 #overlay { position: fixed; inset: 0; display: grid; place-items: center; z-index: 5;
   background: rgba(8,9,11,.88); backdrop-filter: blur(3px); text-align: center; padding: 24px; }
 #overlay[hidden] { display: none; }
-#overlay .card { max-width: 420px; }
+#overlay .card { max-width: 460px; }
 #overlay h1 { margin: 0 0 6px; font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
 #overlay p { margin: 0 0 4px; color: #b5b0a6; }
 #overlay .keys { margin-top: 16px; color: #8d8880; font-size: 12.5px; }
+#overlay .outcomes { margin: 16px auto 0; display: flex; flex-direction: column; gap: 6px;
+  text-align: left; max-width: 360px; }
+#overlay .outcomes div { display: flex; justify-content: space-between; gap: 16px;
+  padding: 8px 12px; border-radius: 9px; background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.08); font-size: 13px; }
+#overlay .outcomes b { font-weight: 600; color: #ffd98a; }
 #bar { width: 220px; height: 3px; margin: 18px auto 0; border-radius: 2px;
   background: rgba(255,255,255,.14); overflow: hidden; }
 #bar i { display: block; height: 100%; width: 35%; background: #ffd98a;
@@ -58,6 +144,16 @@ export class UI {
   private logEl!: HTMLElement
   private overlayEl!: HTMLElement
   private overlayCard!: HTMLElement
+  private missionEl!: HTMLElement
+  private instructionEl!: HTMLElement
+  private hintEl!: HTMLElement
+  private controlsEl!: HTMLElement
+  private answerEl!: HTMLElement
+
+  /** Kept so the hint line can be re-rendered into the answer card when one is open. */
+  private hintText: string | null = null
+  private card: AnswerCardOptions | null = null
+  private controlsHtml: string | null | undefined = undefined
 
   constructor(parent: HTMLElement) {
     const style = document.createElement('style')
@@ -71,8 +167,19 @@ export class UI {
       <div id="prompt"></div>
       <div id="hudTop"></div>
       <div id="perf"></div>
+      <div id="mission" hidden>
+        <div id="instruction"></div>
+        <div id="hint" hidden></div>
+      </div>
+      <div id="controls" hidden></div>
       <div id="log"></div>`
     parent.appendChild(hud)
+
+    const answer = document.createElement('div')
+    answer.id = 'answer'
+    answer.hidden = true
+    answer.innerHTML = `<div class="sheet"></div>`
+    parent.appendChild(answer)
 
     const overlay = document.createElement('div')
     overlay.id = 'overlay'
@@ -84,9 +191,16 @@ export class UI {
     this.hudTopEl = hud.querySelector('#hudTop')!
     this.perfEl = hud.querySelector('#perf')!
     this.logEl = hud.querySelector('#log')!
+    this.missionEl = hud.querySelector('#mission')!
+    this.instructionEl = hud.querySelector('#instruction')!
+    this.hintEl = hud.querySelector('#hint')!
+    this.controlsEl = hud.querySelector('#controls')!
+    this.answerEl = answer
     this.overlayEl = overlay
     this.overlayCard = overlay.querySelector('.card')!
   }
+
+  // --- Overlays ---------------------------------------------------------------
 
   showLoading(message: string): void {
     this.overlayCard.innerHTML = `<h1>Smriti</h1><p>${message}</p><div id="bar"><i></i></div>`
@@ -100,9 +214,30 @@ export class UI {
     this.overlayEl.hidden = false
   }
 
+  /**
+   * The end-of-mission screen. Deliberately not §4.4's summary — that needs recording and
+   * aggregation and belongs to Checkpoint D. This only echoes the outcome the runner
+   * already knows for each step, so the four §4.3 values can be seen to be distinct.
+   */
+  showCompletion(title: string, rows: { label: string; outcome: string }[], keys?: string): void {
+    this.overlayCard.innerHTML =
+      `<h1>${title}</h1><p>Thank you. You can walk around the house again whenever you like.</p>` +
+      `<div class="outcomes">${rows
+        .map((r) => `<div><span>${r.label}</span><b>${r.outcome}</b></div>`)
+        .join('')}</div>` +
+      (keys ? `<div class="keys">${keys}</div>` : '')
+    this.overlayEl.hidden = false
+  }
+
   hideOverlay(): void {
     this.overlayEl.hidden = true
   }
+
+  get overlayVisible(): boolean {
+    return !this.overlayEl.hidden
+  }
+
+  // --- Crosshair prompt --------------------------------------------------------
 
   setPrompt(text: string | null): void {
     if (text) {
@@ -123,12 +258,108 @@ export class UI {
     this.perfEl.textContent = text
   }
 
-  /** Checkpoint A's "E logs an event": visible on screen as well as in the console. */
+  // --- Mission banner ----------------------------------------------------------
+
+  /** `stepLabel` is positional context ("Step 2 of 3"), never a score. */
+  showInstruction(stepLabel: string, instruction: string): void {
+    this.instructionEl.innerHTML = `<span class="step">${stepLabel}</span>${instruction}`
+    this.missionEl.hidden = false
+  }
+
+  hideInstruction(): void {
+    this.missionEl.hidden = true
+  }
+
+  /** One hint line at a time; it replaces the previous level rather than stacking. */
+  setHint(text: string | null): void {
+    this.hintText = text
+    this.hintEl.textContent = text ?? ''
+    this.hintEl.hidden = text === null
+    if (this.card) this.renderCard()
+  }
+
+  setControls(html: string | null): void {
+    // Called every frame from the loop; only touch the DOM when it actually changes.
+    if (html === this.controlsHtml) return
+    this.controlsHtml = html
+    this.controlsEl.innerHTML = html ?? ''
+    this.controlsEl.hidden = html === null
+  }
+
+  // --- Answer card -------------------------------------------------------------
+
+  /**
+   * §5.1: the pointer is already unlocked by the time this is called — releasing it is
+   * what `expectingUnlock` exists to keep from being read as a pause.
+   */
+  showAnswerCard(options: AnswerCardOptions): void {
+    this.card = options
+    this.missionEl.hidden = true
+    this.answerEl.hidden = false
+    this.renderCard()
+  }
+
+  /** Re-render with a changed choice list (level 2) or a revealed answer (level 3). */
+  updateAnswerCard(patch: Partial<AnswerCardOptions>): void {
+    if (!this.card) return
+    this.card = { ...this.card, ...patch }
+    this.renderCard()
+  }
+
+  hideAnswerCard(): void {
+    this.card = null
+    this.answerEl.hidden = true
+  }
+
+  get answerCardVisible(): boolean {
+    return !this.answerEl.hidden
+  }
+
+  private renderCard(): void {
+    const card = this.card
+    if (!card) return
+    const revealed = card.revealedId ?? null
+    const sheet = this.answerEl.querySelector('.sheet')!
+    sheet.innerHTML =
+      `<h2>${card.question}</h2>` +
+      `<div class="choices">${card.choices
+        .map(
+          (c) =>
+            `<button class="choice${c.id === revealed ? ' revealed' : ''}" data-id="${c.id}">` +
+            `<span class="name">${c.name}</span>` +
+            `<span class="rel">${c.relationship}</span>` +
+            `<span class="tag">The answer</span></button>`
+        )
+        .join('')}</div>` +
+      `<p class="note">${this.hintText ?? card.note ?? ''}</p>` +
+      `<div class="actions">` +
+      (revealed && card.onContinue ? `<button class="primary" data-act="continue">Continue</button>` : '') +
+      `<button data-act="skip">Skip this step</button>` +
+      `</div>`
+
+    for (const el of sheet.querySelectorAll<HTMLButtonElement>('button.choice')) {
+      el.addEventListener('click', () => card.onSelect(el.dataset.id!))
+    }
+    sheet
+      .querySelector<HTMLButtonElement>('button[data-act="skip"]')!
+      .addEventListener('click', () => card.onSkip())
+    sheet
+      .querySelector<HTMLButtonElement>('button[data-act="continue"]')
+      ?.addEventListener('click', () => card.onContinue?.())
+  }
+
+  // --- Event log ---------------------------------------------------------------
+
+  /** Checkpoint A's "E logs an event"; Checkpoint B points the telemetry hooks at it. */
   log(message: string): void {
     const line = document.createElement('div')
     line.textContent = message
     this.logEl.appendChild(line)
-    while (this.logEl.childElementCount > 4) this.logEl.removeChild(this.logEl.firstElementChild!)
+    while (this.logEl.childElementCount > 5) this.logEl.removeChild(this.logEl.firstElementChild!)
     setTimeout(() => line.remove(), 6000)
+  }
+
+  clearLog(): void {
+    this.logEl.replaceChildren()
   }
 }

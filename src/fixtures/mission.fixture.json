@@ -1,0 +1,39 @@
+{
+  "patient": { "name": "Mira" },
+  "people": [
+    { "id": "ananya", "name": "Ananya", "relationship": "Granddaughter",
+      "photo": "/packs/mira/ananya.jpg", "voice": "/packs/mira/ananya.mp3" },
+    { "id": "bina", "name": "Bina", "relationship": "Daughter",
+      "photo": "/packs/mira/bina.jpg" },
+    { "id": "rupa", "name": "Rupa", "relationship": "Neighbour",
+      "photo": "/packs/mira/rupa.jpg" }
+  ],
+  "anchors": {
+    "livingRoomWall": "/packs/mira/bihu.jpg",
+    "bedsideFrame": "/packs/mira/ananya.jpg"
+  },
+  "missions": [{
+    "id": "water",
+    "title": "Go to the kitchen and find the water jug",
+    "steps": [
+      { "type": "navigate", "targetRoom": "kitchen",
+        "instruction": "Please go to the kitchen.",
+        "hints": { "repeat": "Please go to the kitchen.",
+                   "highlight": "kitchenDoor",
+                   "guide": "The kitchen is through this door." } },
+      { "type": "find", "targetObject": "water-jug",
+        "instruction": "Can you find the water jug?",
+        "hints": { "repeat": "Can you find the water jug?",
+                   "highlight": "water-jug",
+                   "guide": "It is on the counter, here." } },
+      { "type": "recall",
+        "question": "Who visited you at Bihu in 2019?",
+        "choices": ["ananya", "bina", "rupa"],
+        "answer": "ananya",
+        "reducedChoices": ["ananya", "rupa"],
+        "hints": { "repeat": "Who visited you at Bihu in 2019?",
+                   "highlight": "reduce",
+                   "guide": "It was Ananya, your granddaughter." } }
+    ]
+  }]
+}

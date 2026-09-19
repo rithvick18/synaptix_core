@@ -47,7 +47,12 @@ export class Player {
   }
 
   requestLock(): void {
-    if (!this.isLocked) this.domElement.requestPointerLock()
+    if (this.isLocked) return
+    // Chrome rejects a re-lock made too soon after a deliberate exit, and returns a
+    // promise to say so. Pointer lock is recoverable — the next click asks again — so
+    // the rejection is swallowed rather than surfaced as an unhandled rejection.
+    const result = this.domElement.requestPointerLock() as unknown
+    if (result instanceof Promise) result.catch(() => {})
   }
 
   releaseLock(): void {
