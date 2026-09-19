@@ -4,9 +4,9 @@
     { "id": "ananya", "name": "Ananya", "relationship": "Granddaughter",
       "photo": "/packs/mira/ananya.jpg", "voice": "/packs/mira/ananya.mp3" },
     { "id": "bina", "name": "Bina", "relationship": "Daughter",
-      "photo": "/packs/mira/bina.jpg" },
+      "photo": "/packs/mira/bina.jpg", "voice": "/packs/mira/bina.mp3" },
     { "id": "rupa", "name": "Rupa", "relationship": "Neighbour",
-      "photo": "/packs/mira/rupa.jpg" }
+      "photo": "/packs/mira/rupa.jpg", "voice": "/packs/mira/rupa.mp3" }
   ],
   "anchors": {
     "livingRoomWall": "/packs/mira/bihu.jpg",

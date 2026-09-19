@@ -1,6 +1,15 @@
 import * as THREE from 'three'
 import { Interaction } from './Interaction'
-import { MissionRunner, stopSpeaking, type MemoryPack } from './Missions'
+import {
+  PackRejected,
+  PackVoices,
+  breakagesFromLocation,
+  injectAnchors,
+  loadPack,
+  patientIdFromLocation,
+  type LoadedPack
+} from './MemoryPack'
+import { MissionRunner, stopSpeaking } from './Missions'
 import { Player } from './Player'
 import { Renderer } from './Renderer'
 import { State } from './State'
@@ -8,16 +17,16 @@ import { DWELL_THRESHOLD_MS, Telemetry, type Event } from './Telemetry'
 import { UI } from './ui'
 import { assertWorldContract } from './World'
 import { createProceduralHouse } from './proceduralHouse'
-// §4.1: Checkpoint B ships one bundled fixture, imported directly — no fetch, no
-// validation, no media. Checkpoint C replaces this import with MemoryPack.ts.
-import fixture from './fixtures/mission.fixture.json'
 
 /**
  * SPEC.md §3 — entry and game loop.
  *
  * Checkpoint A: scaffold, renderer, procedural world, movement, one interaction.
  * Checkpoint B adds the mission runner, the hint ladder, the answer card, skip, restart
- * and the telemetry hook call sites. Recording, aggregation and export are Checkpoint D.
+ * and the telemetry hook call sites.
+ * Checkpoint C replaces B's bundled fixture with a real caregiver pack, chosen by
+ * `?patient=`, validated per §4.2 and injected into the world as photographs and voice.
+ * Recording, aggregation and export are Checkpoint D.
  */
 
 const FRAME_WARMUP = 30
@@ -50,6 +59,11 @@ const CONTROLS_DONE = '<span class="keycap">R</span> start again'
 async function boot(): Promise<void> {
   const app = document.getElementById('app')!
   const ui = new UI(app)
+
+  // §6 Checkpoint C: `?patient=raju` changes photos, audible voice and name. The id is
+  // a path segment, so MemoryPack validates its shape before interpolating it.
+  const patientId = patientIdFromLocation(location.search)
+  const breakages = breakagesFromLocation(location.search)
   ui.showLoading('Preparing the house…')
 
   const renderer = new Renderer(app)
@@ -69,6 +83,44 @@ async function boot(): Promise<void> {
 
   const interaction = new Interaction(world)
 
+  // Positional audio needs a listener on the camera, and the pack's voices play from
+  // the world's `audioSource` anchor (§1) — the radio in the living room.
+  const listener = new THREE.AudioListener()
+  renderer.camera.add(listener)
+  const voices = new PackVoices(listener, world.anchors.audioSource)
+
+  // §4.2 — fetch, validate, load media. A pack that cannot be run stops here with the
+  // whole list of problems on screen; the house still renders behind it so it is
+  // obvious the engine is fine and the *pack* is not.
+  let loaded: LoadedPack
+  try {
+    loaded = await loadPack(patientId, world, { breakages })
+  } catch (error) {
+    if (!(error instanceof PackRejected)) throw error
+    console.error('[smriti] pack rejected', error.problems)
+    ui.showRejection(
+      `Pack "${error.patientId}" was not loaded`,
+      `${error.rejections.length} problem(s) must be fixed before this pack can run. ` +
+        'All of them are listed — none depends on another being fixed first.',
+      error.problems,
+      'Fix the pack and reload · <span class="keycap">?patient=</span> chooses a pack'
+    )
+    ;(window as unknown as { __smriti: unknown }).__smriti = { world, renderer, ui, rejected: error }
+    renderOnly(renderer, world)
+    return
+  }
+
+  const { pack, media } = loaded
+  voices.use(media)
+  // Anchor textures and framed photos are the same injection in this world: both §1
+  // anchors (`livingRoomWall`, `bedsideFrame`) are picture frames.
+  const injectionProblems = injectAnchors(world, media)
+  const warnings = [...loaded.problems, ...injectionProblems]
+  for (const problem of warnings) {
+    console.warn(`[smriti] pack warning · ${problem.where} · ${problem.message}`)
+  }
+  document.title = `Smriti — ${pack.patient.name}`
+
   // §4.4: every `t` rides State.elapsed(), the clock that stops in `paused`.
   const telemetry = new Telemetry(() => state.elapsed())
   telemetry.onEvent = (event: Event) => {
@@ -77,9 +129,10 @@ async function boot(): Promise<void> {
     ui.log(describe(event))
   }
 
-  const pack = fixture as MemoryPack
   const mission = pack.missions[0]
-  const missions = new MissionRunner({ pack, mission, world, player, state, telemetry, ui })
+  const missions = new MissionRunner({
+    pack, mission, world, player, state, telemetry, ui, media, voices
+  })
 
   // §5.1: an unlock we did not ask for is a pause.
   player.onUnexpectedUnlock = () => state.pause()
@@ -88,6 +141,7 @@ async function boot(): Promise<void> {
     if (next === 'paused') {
       telemetry.pause()
       stopSpeaking()
+      voices.stop()
       ui.showMessage('Paused', ['The clock is stopped.'], 'Click anywhere to resume')
       return
     }
@@ -102,6 +156,9 @@ async function boot(): Promise<void> {
     'Walk with <b>W A S D</b>, look with the mouse, press <b>E</b> to open doors and interact.',
     'The front door is ahead of you.'
   ], 'Click to start · Esc pauses · K skips a step · R starts again')
+
+  // Degradations are not failures, but they should be visible without a console open.
+  for (const problem of warnings) ui.log(`pack · ${problem.where} · ${problem.message}`)
 
   let currentRoom: string | null = null
   let started = false
@@ -134,7 +191,8 @@ async function boot(): Promise<void> {
 
     telemetry.restart()      // Checkpoint D clears the event log on this hook.
     missions.reset()         // step index, hint levels, card, selected answers, speech
-    stopSpeaking()           // audio playback
+    stopSpeaking()           // spoken instructions
+    voices.stop()            // pack voice playback
     interaction.clear()      // focused object and its highlight
     dropDwell()
     ui.clearLog()
@@ -157,6 +215,8 @@ async function boot(): Promise<void> {
   }
 
   const resume = (): void => {
+    // Browsers start an AudioContext suspended until a gesture. This is that gesture.
+    voices.unlock()
     if (state.current === 'paused') {
       state.resume()
       if (state.pointerLockWanted) player.requestLock()
@@ -285,7 +345,8 @@ async function boot(): Promise<void> {
 
     const step = missions.current
     ui.setHud(
-      `state <b>${state.current}</b> · room <b>${currentRoom ?? '—'}</b> · ` +
+      `pack <b>${loaded.patientId}</b> · ${pack.patient.name} · ` +
+        `state <b>${state.current}</b> · room <b>${currentRoom ?? '—'}</b> · ` +
         `t <b>${(state.elapsed() / 1000).toFixed(1)}s</b>` +
         (step ? ` · step <b>${missions.stepIndex + 1}/${missions.steps.length} ${step.type}</b>` +
           ` · hint <b>${missions.level}</b>` : '') +
@@ -299,6 +360,7 @@ async function boot(): Promise<void> {
    */
   ;(window as unknown as { __smriti: unknown }).__smriti = {
     world, player, interaction, state, renderer, ui, missions, telemetry,
+    pack, media, voices, warnings, patientId: loaded.patientId,
     debug: {
       restart,
       /**
@@ -307,6 +369,12 @@ async function boot(): Promise<void> {
        * this override is how the containment branch itself is exercised: it restarts
        * with the player standing in the named room, and step 1 must finish instantly.
        */
+      /** §6 Checkpoint C's "audible voice" — plays one person's voice on demand. */
+      playVoice(personId: string): string {
+        return voices.play(personId)
+          ? `playing ${personId} from the audioSource anchor`
+          : `no voice loaded for ${personId}`
+      },
       restartInRoom(roomId: string): string {
         const trigger = world.triggers.find((t) => t.room === roomId)
         if (!trigger) return `no such room: ${roomId}`
@@ -323,6 +391,21 @@ async function boot(): Promise<void> {
   console.log('[smriti] assets', { ...report, ...envReport })
 
   requestAnimationFrame(loop)
+}
+
+/**
+ * Keeps the house on screen behind a pack-rejection list. There is no player, no
+ * mission and no telemetry in this loop — only the world and its doors — because the
+ * point of the screen behind it is that the engine loaded and the pack did not.
+ */
+function renderOnly(renderer: Renderer, world: { update?: (dt: number) => boolean }): void {
+  const clock = new THREE.Clock()
+  const tick = (): void => {
+    requestAnimationFrame(tick)
+    if (world.update?.(Math.min(clock.getDelta(), 0.05))) renderer.refreshShadows()
+    renderer.render()
+  }
+  requestAnimationFrame(tick)
 }
 
 /** Nearest non-colliding standing spot to a room's centre. Debug helper only. */

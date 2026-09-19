@@ -1,0 +1,39 @@
+{
+  "patient": { "name": "Raju" },
+  "people": [
+    { "id": "manoj", "name": "Manoj", "relationship": "Son",
+      "photo": "/packs/raju/manoj.jpg", "voice": "/packs/raju/manoj.mp3" },
+    { "id": "sarita", "name": "Sarita", "relationship": "Sister",
+      "photo": "/packs/raju/sarita.jpg", "voice": "/packs/raju/sarita.mp3" },
+    { "id": "iqbal", "name": "Iqbal", "relationship": "Old friend",
+      "photo": "/packs/raju/iqbal.jpg", "voice": "/packs/raju/iqbal.mp3" }
+  ],
+  "anchors": {
+    "livingRoomWall": "/packs/raju/chilika.jpg",
+    "bedsideFrame": "/packs/raju/manoj.jpg"
+  },
+  "missions": [{
+    "id": "water",
+    "title": "Fetch a glass of water from the kitchen",
+    "steps": [
+      { "type": "navigate", "targetRoom": "kitchen",
+        "instruction": "Raju, would you walk through to the kitchen?",
+        "hints": { "repeat": "Raju, would you walk through to the kitchen?",
+                   "highlight": "kitchenDoor",
+                   "guide": "This is the kitchen door. Go through here." } },
+      { "type": "find", "targetObject": "water-jug",
+        "instruction": "The water jug should be in here. Can you spot it?",
+        "hints": { "repeat": "The water jug should be in here. Can you spot it?",
+                   "highlight": "water-jug",
+                   "guide": "There it is, on the counter beside you." } },
+      { "type": "recall",
+        "question": "Who took you out on the boat at Chilika every winter?",
+        "choices": ["manoj", "sarita", "iqbal"],
+        "answer": "iqbal",
+        "reducedChoices": ["iqbal", "manoj"],
+        "hints": { "repeat": "Who took you out on the boat at Chilika every winter?",
+                   "highlight": "reduce",
+                   "guide": "It was Iqbal, your old friend from the village." } }
+    ]
+  }]
+}

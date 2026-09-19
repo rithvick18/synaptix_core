@@ -15,6 +15,20 @@ export interface ChoiceCard {
   id: string
   name: string
   relationship: string
+  /**
+   * A photo URL that is already known to decode, or null for a text card (§4.2).
+   * The mixing rule is enforced at render time, not trusted from the caller.
+   */
+  photoUrl?: string | null
+  /** Whether clicking this card will speak. Purely a cue that sound is coming. */
+  hasVoice?: boolean
+}
+
+/** One row of the pack-rejection list. Mirrors MemoryPack's `PackProblem`. */
+export interface RenderedProblem {
+  severity: 'reject' | 'warn'
+  where: string
+  message: string
 }
 
 export interface AnswerCardOptions {
@@ -100,8 +114,13 @@ canvas { display: block; }
   transition: transform .12s ease, border-color .12s ease, background .12s ease; }
 #answer button.choice:hover { transform: translateY(-2px); border-color: rgba(255,217,138,.6);
   background: #2a2e35; }
+#answer button.choice.photo { padding: 0 0 14px; overflow: hidden; }
+#answer button.choice .portrait { display: block; width: 100%; aspect-ratio: 1 / 1;
+  object-fit: cover; background: #1a1c20; margin-bottom: 12px; }
 #answer button.choice .name { display: block; font-size: 18px; font-weight: 600; }
 #answer button.choice .rel { display: block; margin-top: 3px; font-size: 13px; color: #b5b0a6; }
+#answer button.choice .voice { display: block; margin-top: 6px; font-size: 11.5px;
+  letter-spacing: .07em; text-transform: uppercase; color: #8d8880; }
 /* The reveal marks the answer. There is no counterpart for a wrong choice, by design. */
 #answer button.choice.revealed { border-color: #ffd98a; background: #33302a; }
 #answer button.choice .tag { display: none; }
@@ -123,6 +142,17 @@ canvas { display: block; }
 #overlay h1 { margin: 0 0 6px; font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
 #overlay p { margin: 0 0 4px; color: #b5b0a6; }
 #overlay .keys { margin-top: 16px; color: #8d8880; font-size: 12.5px; }
+/* Pack rejection (§4.2): every problem at once, so one reload shows the whole list. */
+#overlay .card.wide { max-width: 760px; }
+#overlay .problems { margin: 16px 0 0; padding: 0; list-style: none; text-align: left;
+  max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+#overlay .problems li { padding: 9px 12px; border-radius: 9px; background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.1); font-size: 13px; }
+#overlay .problems li.warn { border-style: dashed; opacity: .8; }
+#overlay .problems .where { display: block; font: 12px/1.5 ui-monospace, SFMono-Regular,
+  Menlo, monospace; color: #ffd98a; }
+#overlay .problems .sev { float: right; margin-left: 12px; font-size: 11px;
+  letter-spacing: .08em; text-transform: uppercase; color: #8d8880; }
 #overlay .outcomes { margin: 16px auto 0; display: flex; flex-direction: column; gap: 6px;
   text-align: left; max-width: 360px; }
 #overlay .outcomes div { display: flex; justify-content: space-between; gap: 16px;
@@ -203,11 +233,13 @@ export class UI {
   // --- Overlays ---------------------------------------------------------------
 
   showLoading(message: string): void {
+    this.overlayCard.classList.remove('wide')
     this.overlayCard.innerHTML = `<h1>Smriti</h1><p>${message}</p><div id="bar"><i></i></div>`
     this.overlayEl.hidden = false
   }
 
   showMessage(title: string, lines: string[], keys?: string): void {
+    this.overlayCard.classList.remove('wide')
     this.overlayCard.innerHTML =
       `<h1>${title}</h1>${lines.map((l) => `<p>${l}</p>`).join('')}` +
       (keys ? `<div class="keys">${keys}</div>` : '')
@@ -220,6 +252,7 @@ export class UI {
    * already knows for each step, so the four §4.3 values can be seen to be distinct.
    */
   showCompletion(title: string, rows: { label: string; outcome: string }[], keys?: string): void {
+    this.overlayCard.classList.remove('wide')
     this.overlayCard.innerHTML =
       `<h1>${title}</h1><p>Thank you. You can walk around the house again whenever you like.</p>` +
       `<div class="outcomes">${rows
@@ -229,8 +262,29 @@ export class UI {
     this.overlayEl.hidden = false
   }
 
+  /**
+   * §4.2 — a pack that cannot be run, with **every** problem listed at once. Warnings
+   * are shown alongside the rejections deliberately: a caregiver fixing the file wants
+   * one list, not one reload per fault.
+   */
+  showRejection(title: string, subtitle: string, problems: RenderedProblem[], keys?: string): void {
+    this.overlayCard.classList.add('wide')
+    this.overlayCard.innerHTML =
+      `<h1>${title}</h1><p>${subtitle}</p>` +
+      `<ul class="problems">${problems
+        .map(
+          (p) =>
+            `<li class="${p.severity}"><span class="sev">${p.severity}</span>` +
+            `<span class="where">${p.where}</span>${p.message}</li>`
+        )
+        .join('')}</ul>` +
+      (keys ? `<div class="keys">${keys}</div>` : '')
+    this.overlayEl.hidden = false
+  }
+
   hideOverlay(): void {
     this.overlayEl.hidden = true
+    this.overlayCard.classList.remove('wide')
   }
 
   get overlayVisible(): boolean {
@@ -320,14 +374,23 @@ export class UI {
     if (!card) return
     const revealed = card.revealedId ?? null
     const sheet = this.answerEl.querySelector('.sheet')!
+
+    // §4.2's no-mixing rule, enforced where the markup is written rather than trusted
+    // from the caller: photos appear only if *every* choice on screen has one. A single
+    // text card among photographs would point straight at the answer.
+    const photos = card.choices.every((c) => !!c.photoUrl)
+
     sheet.innerHTML =
       `<h2>${card.question}</h2>` +
       `<div class="choices">${card.choices
         .map(
           (c) =>
-            `<button class="choice${c.id === revealed ? ' revealed' : ''}" data-id="${c.id}">` +
+            `<button class="choice${photos ? ' photo' : ''}${c.id === revealed ? ' revealed' : ''}"` +
+            ` data-id="${c.id}">` +
+            (photos ? `<img class="portrait" src="${c.photoUrl}" alt="" draggable="false">` : '') +
             `<span class="name">${c.name}</span>` +
             `<span class="rel">${c.relationship}</span>` +
+            (c.hasVoice ? `<span class="voice">Tap to hear them</span>` : '') +
             `<span class="tag">The answer</span></button>`
         )
         .join('')}</div>` +

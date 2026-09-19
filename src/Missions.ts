@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import type { PackMedia, PackVoices } from './MemoryPack'
 import type { Player } from './Player'
 import type { State } from './State'
 import type { Outcome, Telemetry } from './Telemetry'
@@ -19,8 +20,12 @@ import type { ChoiceCard, UI } from './ui'
  */
 
 // ---------------------------------------------------------------------------
-// Pack shape — §4.1, exactly. Checkpoint C replaces the import with real loading and
-// adds §4.2 validation; the types do not move.
+// Pack shape — §4.1, exactly.
+//
+// These are the *validated* shapes. Checkpoint C's MemoryPack.ts is the only thing that
+// constructs them, and it does so only after §4.2 has passed, so the runner below never
+// re-checks a reference: by the time a `Step` exists, its room, object and highlight ids
+// are known to be present in the active world and its choices are known to name people.
 // ---------------------------------------------------------------------------
 
 export interface Person {
@@ -95,16 +100,26 @@ export function instructionOf(step: Step): string {
 // Silently absent where the API is not available, per §1.1's degradation contract.
 // ---------------------------------------------------------------------------
 
-function speak(text: string): void {
+function speak(text: string, onEnd?: () => void): void {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
-  if (!synth) return
+  if (!synth) {
+    // Absent speech must not swallow whatever was queued behind it.
+    onEnd?.()
+    return
+  }
   try {
     synth.cancel()
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.rate = 0.92
+    if (onEnd) {
+      // `cancel()` also ends an utterance, so `onEnd` fires on interruption as well as
+      // on completion. Callers guard against acting on a step that has since moved on.
+      utterance.onend = () => onEnd()
+      utterance.onerror = () => onEnd()
+    }
     synth.speak(utterance)
   } catch {
-    /* Speech is assistive, never required. */
+    onEnd?.()
   }
 }
 
@@ -212,6 +227,10 @@ export interface MissionRunnerDeps {
   state: State
   telemetry: Telemetry
   ui: UI
+  /** What actually loaded (§4.2) — photos, voices, and each question's card style. */
+  media: PackMedia
+  /** Positional playback of the pack's voices, mounted on the `audioSource` anchor. */
+  voices: PackVoices
 }
 
 /** Engine chrome, not memory content: neutral, never "wrong", never a tally. */
@@ -274,6 +293,7 @@ export class MissionRunner {
     this.outcomes.fill(null)
     this.beacon.hide()
     stopSpeaking()
+    this.deps.voices.stop()
     this.deps.ui.hideAnswerCard()
     this.deps.ui.hideInstruction()
     this.deps.ui.setHint(null)
@@ -339,7 +359,17 @@ export class MissionRunner {
     speak(text)
 
     if (step.type === 'recall') {
-      this.openAnswerCard(step)
+      const cards = this.choiceCards(step.choices)
+      // §4.2's last resort: "All choice rendering fails → skip the step, outcome
+      // `skipped`." Validation rejects a pack whose choices name nobody, so this is
+      // defensive rather than routine — but a question with nothing on it must not sit
+      // on screen waiting for a click that can never come.
+      if (cards.length === 0) {
+        console.warn('[smriti] no renderable choices for this question; skipping the step')
+        this.endStep('skipped')
+        return
+      }
+      this.openAnswerCard(step, cards)
       return
     }
 
@@ -420,7 +450,10 @@ export class MissionRunner {
     if (level === 2) {
       if (step.type === 'recall') {
         // Swap to the reduced choices, always keeping the answer.
-        this.deps.ui.updateAnswerCard({ choices: this.choiceCards(this.reduce(step)), note: null })
+        this.deps.ui.updateAnswerCard({
+          choices: this.choiceCards(this.reduce(step)),
+          note: null
+        })
       } else {
         this.beacon.show(this.deps.world.hintTargets[step.hints.highlight])
         if (!this.deps.world.hintTargets[step.hints.highlight]) {
@@ -434,18 +467,29 @@ export class MissionRunner {
 
     // Level 3 — the branch the whole table exists for.
     this.setHintText(step.hints.guide)
-    speak(step.hints.guide)
 
-    if (step.type === 'recall') {
-      // Reveal the answer. The step may now end as `revealed`.
-      this.revealed = true
-      this.deps.ui.updateAnswerCard({ revealedId: step.answer, note: null })
+    if (step.type !== 'recall') {
+      // navigate / find: show guidance and speak it, then wait. Nothing completes here
+      // — the player still has to walk into the room or press E on the object, and
+      // doing so scores `cued` (§4.3). Skip stays available.
+      speak(step.hints.guide)
       return
     }
 
-    // navigate / find: show guidance and wait. Nothing completes here — the player still
-    // has to walk into the room or press E on the object, and doing so scores `cued`.
-    // Skip stays available.
+    // Reveal the answer. The step may now end as `revealed`. The card is marked before
+    // anything is spoken, so the state the callback below tests is already settled.
+    this.revealed = true
+    this.deps.ui.updateAnswerCard({ revealedId: step.answer, note: null })
+
+    // "It was Ananya, your granddaughter." — and then Ananya, in her own voice.
+    // Chained rather than simultaneous: two voices at once is the one thing a person
+    // with dementia can least afford to untangle. Cancelling an utterance also fires
+    // its `onend`, so the callback re-checks that the step it belongs to is still the
+    // one on screen before playing anything.
+    const at = this.index
+    speak(step.hints.guide, () => {
+      if (this.running && this.index === at && this.revealed) this.deps.voices.play(step.answer)
+    })
   }
 
   private setHintText(text: string): void {
@@ -455,7 +499,7 @@ export class MissionRunner {
 
   // --- Recall ------------------------------------------------------------------------
 
-  private openAnswerCard(step: RecallStep): void {
+  private openAnswerCard(step: RecallStep, cards: ChoiceCard[]): void {
     // §5.1: freeze movement and release the pointer *deliberately*. `releaseLock()` sets
     // `expectingUnlock` first, so the pointerlockchange handler does not read this as a
     // pause. Timers keep running — `answering` does not stop the clock.
@@ -464,7 +508,7 @@ export class MissionRunner {
 
     this.deps.ui.showAnswerCard({
       question: step.question,
-      choices: this.choiceCards(step.choices),
+      choices: cards,
       revealedId: null,
       note: null,
       onSelect: (id) => this.onChoice(step, id),
@@ -477,6 +521,11 @@ export class MissionRunner {
   private onChoice(step: RecallStep, id: string): void {
     const correct = id === step.answer
     this.deps.telemetry.answerSelected(id, correct)
+
+    // Every card speaks with its own voice, whichever one was picked. Playing the voice
+    // only for the answer would be a correctness signal, which §5.4 rules out as surely
+    // as a red cross does. Missing voice → silence (§4.2), never a beep or a buzz.
+    this.deps.voices.play(id)
 
     if (this.revealed) {
       // The answer was already given, so this is not the player recalling it (§4.3).
@@ -512,19 +561,40 @@ export class MissionRunner {
   }
 
   /**
-   * Checkpoint B is text-only by instruction — no media. §4.2's photo rules, including
-   * "any recall photo fails to load → every choice in that question becomes text", land
-   * in Checkpoint C; rendering every card the same way now is the state that rule ends in.
+   * §4.2: "**Any** recall photo fails to load → apply the same text-only card style to
+   * every choice in that question. Never mix photo and text cards — the odd one out
+   * identifies the answer."
+   *
+   * The decision is not taken here. MemoryPack settles it once per question, over the
+   * question's full choice list, after every photo has either decoded or failed; this
+   * only reads it. That matters because level 2 re-renders the card with a *subset* of
+   * the choices, and the style must not change halfway through a question. The UI
+   * re-checks the invariant independently when it renders.
+   *
+   * A choice with no person behind it is dropped rather than rendered as a bare id.
+   * Validation rejects such a pack outright, so the only way to reach that is a world
+   * and pack that disagree at runtime — and an empty list is what `beginStep` reads as
+   * §4.2's "all choice rendering fails".
    */
   private choiceCards(ids: string[]): ChoiceCard[] {
-    return ids.map((id) => {
+    const style = this.deps.media.cardStyle(this.deps.mission.id, this.index)
+    const cards: ChoiceCard[] = []
+    for (const id of ids) {
       const person = this.people.get(id)
       if (!person) {
-        console.warn(`[smriti] choice id absent from people: ${id}`)
-        return { id, name: id, relationship: '' }
+        console.warn(`[smriti] choice id absent from people, dropping it: ${id}`)
+        continue
       }
-      return { id: person.id, name: person.name, relationship: person.relationship }
-    })
+      cards.push({
+        id: person.id,
+        name: person.name,
+        relationship: person.relationship,
+        photoUrl: style === 'photo' ? this.deps.media.photoFor(person.id) : null,
+        // Present whether or not the card shows a photo: a text card can still speak.
+        hasVoice: this.deps.media.voiceFor(person.id) !== null
+      })
+    }
+    return cards
   }
 
   /** Back to walking: re-lock only on the way into `exploring`, per §5.1. */

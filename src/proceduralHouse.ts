@@ -629,6 +629,9 @@ function buildProp(kind: string, mats: Materials): THREE.Object3D {
 }
 
 /** Anchors are mount points (§1) carrying a neutral placeholder until a pack (C) fills them. */
+/** The mesh inside a frame anchor that carries the pack's photo. See MemoryPack.ts. */
+export const ANCHOR_PLATE = 'anchor-plate'
+
 function buildFrameAnchor(width: number, height: number, mats: Materials): THREE.Object3D {
   const group = new THREE.Group()
   const frame = new THREE.Mesh(new THREE.BoxGeometry(0.035, height + 0.08, width + 0.08), mats.get('darkWood'))
@@ -640,6 +643,10 @@ function buildFrameAnchor(width: number, height: number, mats: Materials): THREE
   )
   plate.rotation.y = Math.PI / 2
   plate.position.x = 0.019
+  // Named so MemoryPack.ts can find the picture surface of any frame anchor without
+  // knowing how the frame was built (§4.2 injection). The neutral plate colour above is
+  // also the "decorative anchor photo missing" fallback: a bare frame, never a hole.
+  plate.name = ANCHOR_PLATE
   group.add(plate)
   return group
 }
