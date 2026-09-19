@@ -424,10 +424,26 @@ export const SPAWN_LOOK_AT: [number, number] = [0, Z1]
 
 export const JUG_POSITION: [number, number, number] = [3.7, 0.9, Z0 + 0.33]
 export const LIVING_ROOM_WALL_ANCHOR: [number, number, number] = [X1 - 0.06, 1.78, 2.6]
-export const LIVING_ROOM_WALL_YAW = -Math.PI / 2
+/**
+ * The frame hangs on the east wall and faces west, into the room — so the plate's own
+ * +X normal has to be turned right around, not quarter-turned.
+ *
+ * This read `-Math.PI / 2` until the framed photograph became something the player walks
+ * up to and looks at. At that yaw the frame lay across the wall instead of against it:
+ * its 1.03 m body ran from x 6.93 to x 7.96, pushing a third of the picture through the
+ * exterior wall, and the picture surface faced down the room rather than out of it. It
+ * was never obvious from a screenshot because the part that escaped is outside.
+ */
+export const LIVING_ROOM_WALL_YAW = Math.PI
 export const BEDSIDE_FRAME_ANCHOR: [number, number, number] = [X0 + 0.25, 0.55, -2.15]
 export const BEDSIDE_FRAME_YAW = 0.35
-export const AUDIO_SOURCE_ANCHOR: [number, number, number] = [3.7, 0.5, Z1 - 0.25]
+/**
+ * The radio, on the west end of the television unit (`tv-unit` spans x 3.4 → 5.7, top
+ * at 0.5). It used to sit at x 3.7, which put it under the television screen that
+ * starts at x 3.8; it is now clear of the screen so the level-2 step that asks for it
+ * is not asking the player to pick it out of a black rectangle.
+ */
+export const AUDIO_SOURCE_ANCHOR: [number, number, number] = [3.62, 0.5, Z1 - 0.28]
 
 /** Small dressing props: id, position, kind. Built in code. */
 export const PROPS: { id: string; at: [number, number, number]; kind: string }[] = [

@@ -1,5 +1,14 @@
 import * as THREE from 'three'
-import type { MemoryPack, Mission, Person, RecallStep, Step } from './Missions'
+import type {
+  ChoiceFormat,
+  DemoNotice,
+  MemoryPack,
+  Mission,
+  Person,
+  RecallStep,
+  Step,
+  TextChoice
+} from './Missions'
 import { ANCHOR_PLATE } from './proceduralHouse'
 import type { StageProgress } from './ui'
 import type { WorldSource } from './World'
@@ -220,6 +229,7 @@ export function validate(raw: unknown, world: WorldSource): { pack: MemoryPack |
   // --- missions --------------------------------------------------------------
   const rooms = new Set(world.triggers.map((t) => t.room))
   const missions: Mission[] = []
+  const missionIds = new Set<string>()
 
   if (!Array.isArray(raw.missions) || raw.missions.length === 0) {
     p.reject('missions-missing', 'missions', 'A pack must contain at least one mission.')
@@ -234,6 +244,26 @@ export function validate(raw: unknown, world: WorldSource): { pack: MemoryPack |
       const title = str(entry.title)
       if (!id) p.reject('mission-id-missing', `${at}.id`, 'Each mission needs an id.')
       if (!title) p.reject('mission-title-missing', `${at}.title`, 'Each mission needs a title.')
+      if (id && missionIds.has(id)) {
+        // Levels are addressed by mission id — in the export, in `?level=`, and in the
+        // check that no two attempts share a log. Two levels called the same thing
+        // would make every one of those ambiguous.
+        p.reject('mission-id-duplicate', `${at}.id`, `Two missions share the id "${id}".`)
+      }
+      if (id) missionIds.add(id)
+
+      // The level-selection screen shows a line under each title. It is caregiver text
+      // like everything else, so a pack that omits it gets a blank line, not an
+      // engine-written summary of its own steps (§2).
+      const description = str(entry.description)
+      if (!description) {
+        p.warn(
+          'mission-description-missing',
+          `${at}.description`,
+          'This mission has no description; the level-selection screen will show only its title.'
+        )
+      }
+
       if (!Array.isArray(entry.steps) || entry.steps.length === 0) {
         p.reject('mission-steps-missing', `${at}.steps`, 'Each mission needs at least one step.')
         return
@@ -245,12 +275,37 @@ export function validate(raw: unknown, world: WorldSource): { pack: MemoryPack |
         if (step) steps.push(step)
       })
 
-      if (id && title && steps.length === entry.steps.length) missions.push({ id, title, steps })
+      if (id && title && steps.length === entry.steps.length) {
+        missions.push({ id, title, description: description ?? '', steps })
+      }
     })
   }
 
+  // --- demo notice -----------------------------------------------------------
+  // Optional, and deliberately not inferred: a pack is demonstration content only if it
+  // says so. A caregiver pack describing a real patient omits the block and nothing is
+  // labelled.
+  let demo: DemoNotice | undefined
+  if (raw.demo !== undefined) {
+    if (!isObject(raw.demo)) {
+      p.reject('demo-malformed', 'demo', 'demo must be an object with `fictional` and `notice`.')
+    } else {
+      const notice = str(raw.demo.notice)
+      if (typeof raw.demo.fictional !== 'boolean') {
+        p.reject('demo-fictional-missing', 'demo.fictional', 'demo.fictional must be true or false.')
+      } else if (!notice) {
+        p.reject('demo-notice-missing', 'demo.notice', 'demo needs a notice to display on screen.')
+      } else {
+        demo = { fictional: raw.demo.fictional, notice }
+      }
+    }
+  }
+
   if (p.fatal) return { pack: null, problems: p.all }
-  return { pack: { patient: { name: patientName }, people, anchors, missions }, problems: p.all }
+  return {
+    pack: { patient: { name: patientName }, people, anchors, missions, demo },
+    problems: p.all
+  }
 }
 
 interface StepContext {
@@ -335,6 +390,69 @@ function validateStep(raw: unknown, at: string, ctx: StepContext, p: Problems): 
     const answer = str(raw.answer)
     if (!question) p.reject('question-missing', `${at}.question`, 'A recall step needs a question.')
 
+    // --- which choice format? ------------------------------------------------
+    // Declared, not sniffed. Omitting it means `person`, which is what §4.1's example
+    // pack uses and what every pack written before text choices existed meant.
+    const declared = raw.choiceType === undefined ? 'person' : str(raw.choiceType)
+    let choiceType: ChoiceFormat = 'person'
+    if (declared !== 'person' && declared !== 'text') {
+      p.reject(
+        'choice-type-unknown',
+        `${at}.choiceType`,
+        `Unknown choiceType "${declared ?? '(malformed)'}" — expected "person" or "text".`
+      )
+    } else {
+      choiceType = declared
+    }
+
+    // --- options, for the text format ----------------------------------------
+    const options: TextChoice[] = []
+    const optionIds = new Set<string>()
+    if (raw.options !== undefined) {
+      if (choiceType !== 'text') {
+        p.reject(
+          'options-on-person-question',
+          `${at}.options`,
+          'options belongs to a text question; a person question takes its labels from `people`.'
+        )
+      } else if (!Array.isArray(raw.options) || raw.options.length < 2) {
+        p.reject('options-missing', `${at}.options`, 'A text question needs at least two options.')
+      } else {
+        raw.options.forEach((o: unknown, i: number) => {
+          const where = `${at}.options[${i}]`
+          if (!isObject(o)) {
+            p.reject('option-malformed', where, 'Each option must be an object with an id and a label.')
+            return
+          }
+          const id = str(o.id)
+          const label = str(o.label)
+          if (!id) p.reject('option-id-missing', `${where}.id`, 'Each option needs an id.')
+          if (!label) p.reject('option-label-missing', `${where}.label`, 'Each option needs a label to show.')
+          if (id && optionIds.has(id)) {
+            p.reject('option-id-duplicate', `${where}.id`, `Two options share the id "${id}".`)
+            return
+          }
+          if (id && label) {
+            optionIds.add(id)
+            options.push({ id, label, detail: str(o.detail) ?? undefined })
+          }
+        })
+      }
+    } else if (choiceType === 'text') {
+      p.reject(
+        'options-missing',
+        `${at}.options`,
+        'A text question must list its options; there is no `people` entry to read a label from.'
+      )
+    }
+
+    // --- choices, in whichever format ----------------------------------------
+    // The membership rule is the only thing that differs: a person choice must name
+    // somebody in `people`, a text choice must name one of this step's own options.
+    // Everything after this point — answer membership, reducedChoices — is shared, so
+    // neither format can quietly skip a check the other gets.
+    const known = choiceType === 'text' ? optionIds : ctx.peopleIds
+    const kind = choiceType === 'text' ? 'option' : 'person'
     const choices: string[] = []
     if (!Array.isArray(raw.choices) || raw.choices.length < 2) {
       p.reject('choices-missing', `${at}.choices`, 'A recall step needs at least two choices.')
@@ -342,12 +460,16 @@ function validateStep(raw: unknown, at: string, ctx: StepContext, p: Problems): 
       raw.choices.forEach((c: unknown, i: number) => {
         const id = str(c)
         if (!id) {
-          p.reject('choice-malformed', `${at}.choices[${i}]`, 'Each choice must be a person id.')
+          p.reject('choice-malformed', `${at}.choices[${i}]`, `Each choice must be a ${kind} id.`)
           return
         }
-        if (!ctx.peopleIds.has(id)) {
-          // §4.2 — a choice with nobody behind it cannot be rendered at all.
-          p.reject('choice-unknown-person', `${at}.choices[${i}]`, `No person with id "${id}" in this pack.`)
+        if (!known.has(id)) {
+          // §4.2 — a choice with nothing behind it cannot be rendered at all.
+          p.reject(
+            choiceType === 'text' ? 'choice-unknown-option' : 'choice-unknown-person',
+            `${at}.choices[${i}]`,
+            `No ${kind} with id "${id}" in this ${choiceType === 'text' ? 'question' : 'pack'}.`
+          )
           return
         }
         if (choices.includes(id)) {
@@ -356,6 +478,18 @@ function validateStep(raw: unknown, at: string, ctx: StepContext, p: Problems): 
         }
         choices.push(id)
       })
+    }
+
+    // An option nobody can pick is dead weight in a caregiver's file, not a fault that
+    // stops the level running.
+    for (const option of options) {
+      if (!choices.includes(option.id)) {
+        p.warn(
+          'option-unused',
+          `${at}.options`,
+          `Option "${option.id}" is never offered as a choice; it will not be shown.`
+        )
+      }
     }
 
     if (!answer) p.reject('answer-missing', `${at}.answer`, 'A recall step needs an answer.')
@@ -403,7 +537,17 @@ function validateStep(raw: unknown, at: string, ctx: StepContext, p: Problems): 
     if (highlight && highlight !== REDUCE_SENTINEL) checkHighlight()
 
     if (!question || !answer || !hints || choices.length < 2 || !choices.includes(answer)) return null
-    return { type: 'recall', question, choices, answer, reducedChoices, hints }
+    if (choiceType === 'text' && options.length < 2) return null
+    return {
+      type: 'recall',
+      question,
+      choiceType,
+      choices,
+      options: choiceType === 'text' ? options : undefined,
+      answer,
+      reducedChoices,
+      hints
+    }
   }
 
   p.reject('step-type-unknown', `${at}.type`, `Unknown step type "${type ?? '(missing)'}" — expected navigate, find or recall.`)
@@ -621,6 +765,12 @@ export async function loadMedia(
     mission.steps.forEach((step, index) => {
       if (step.type !== 'recall') return
       const recall = step as RecallStep
+      // A text question has no portraits to lose, so there is no decision to take and
+      // nothing to warn about: its cards were always going to be text.
+      if (recall.choiceType === 'text') {
+        media.setStyle(mission.id, index, 'text')
+        return
+      }
       // Over the *full* choice list, not the reduced one: level 2 swaps the list mid
       // question, and the card style must not change underneath the player.
       const everyPhotoLoaded = recall.choices.every((id) => media.photoFor(id) !== null)

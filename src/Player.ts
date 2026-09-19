@@ -68,7 +68,31 @@ export class Player {
     this.position.y = EYE_HEIGHT
     this.yaw = yaw
     this.pitch = 0
+    this.clearInput()
+    this.syncCamera()
+  }
+
+  /**
+   * Forgets every key currently held. A key held down across a level switch would
+   * otherwise keep moving the player through the first seconds of the new attempt,
+   * because `keyup` for it never arrives while the overlay has the pointer.
+   */
+  clearInput(): void {
     this.keys.clear()
+  }
+
+  /**
+   * Points the camera at a world position. Used by the reachability probe rather than
+   * by the game: the player aims with the mouse, and nothing in a session moves their
+   * view for them.
+   */
+  aimAt(target: THREE.Vector3): void {
+    const dx = target.x - this.position.x
+    const dy = target.y - this.position.y
+    const dz = target.z - this.position.z
+    // Camera forward at yaw is (-sin, 0, -cos), so this is the yaw that faces `target`.
+    this.yaw = Math.atan2(-dx, -dz)
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, Math.atan2(dy, Math.hypot(dx, dz))))
     this.syncCamera()
   }
 

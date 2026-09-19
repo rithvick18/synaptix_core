@@ -7,12 +7,14 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "check:offline": "node tools/offline-check.mjs"
+    "check:offline": "node tools/offline-check.mjs",
+    "check": "node tools/checks/run.mjs"
   },
   "dependencies": {
     "three": "0.181.2"
   },
   "devDependencies": {
+    "@types/node": "^24.13.6",
     "@types/three": "0.181.0",
     "typescript": "5.9.3",
     "vite": "7.1.5"

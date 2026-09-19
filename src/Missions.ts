@@ -56,10 +56,43 @@ export interface FindStep {
   hints: StepHints
 }
 
+/**
+ * An explicit text option for a recall question that is not about *who* somebody is.
+ *
+ * "Which festival were we celebrating?" has no person behind its choices, so there is
+ * nobody to look up in `people` and no portrait to show. The caregiver writes the label
+ * out instead, exactly as the patient should read it — §2's rule that the engine never
+ * invents autobiographical content applies here as much as anywhere: `label` and
+ * `detail` are displayed verbatim and are never generated.
+ */
+export interface TextChoice {
+  id: string
+  label: string
+  /** Optional second line — where or when, in the caregiver's words. */
+  detail?: string
+}
+
+/**
+ * Which of the two choice formats a recall step uses. Declared rather than sniffed, so
+ * a pack says what it means and validation can check the right rules:
+ *
+ * - `person` — `choices` are ids into `people`; cards can carry a portrait and a voice.
+ * - `text`   — `choices` are ids into this step's own `options`; cards are always text.
+ *
+ * Both formats share everything else: `answer` must be one of `choices`, and
+ * `reducedChoices` must be a subset of `choices` that still contains the answer.
+ */
+export type ChoiceFormat = 'person' | 'text'
+
 export interface RecallStep {
   type: 'recall'
   question: string
+  /** Defaults to `person` when a pack omits it, which keeps §4.1's example valid. */
+  choiceType: ChoiceFormat
+  /** Ids, in both formats. What they point at is what `choiceType` decides. */
   choices: string[]
+  /** Present exactly when `choiceType` is `text`; one entry per id in `choices`. */
+  options?: TextChoice[]
   answer: string
   reducedChoices?: string[]
   hints: StepHints
@@ -70,7 +103,19 @@ export type Step = NavigateStep | FindStep | RecallStep
 export interface Mission {
   id: string
   title: string
+  /** One short line for the level-selection screen. Caregiver-written, like everything. */
+  description: string
   steps: Step[]
+}
+
+/**
+ * Marks a pack as authored demonstration content rather than a real person's history.
+ * The two packs bundled with this repository are fictional and say so on screen; a
+ * caregiver-supplied pack describing a real patient simply omits this block.
+ */
+export interface DemoNotice {
+  fictional: boolean
+  notice: string
 }
 
 export interface MemoryPack {
@@ -78,6 +123,7 @@ export interface MemoryPack {
   people: Person[]
   anchors: Record<string, string>
   missions: Mission[]
+  demo?: DemoNotice
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +245,16 @@ class HintBeacon {
     ;(this.edges.material as THREE.LineBasicMaterial).opacity = 0.55 + 0.4 * pulse
   }
 
+  /** Drops the beacon out of the scene. One runner per attempt means one beacon each. */
+  dispose(): void {
+    this.hide()
+    this.group.removeFromParent()
+    this.box.geometry.dispose()
+    ;(this.box.material as THREE.Material).dispose()
+    this.edges.geometry.dispose()
+    ;(this.edges.material as THREE.Material).dispose()
+  }
+
   private fit(): void {
     if (!this.target) return
     this.bounds.setFromObject(this.target)
@@ -231,6 +287,12 @@ export interface MissionRunnerDeps {
   media: PackMedia
   /** Positional playback of the pack's voices, mounted on the `audioSource` anchor. */
   voices: PackVoices
+  /**
+   * Which level this is, in the words the player sees — e.g. "Level 2 of 3 · Morning
+   * walk". Shown above the step instruction for the whole attempt, so the screen always
+   * says what is being played as well as what to do next.
+   */
+  levelLabel: string
 }
 
 /** Engine chrome, not memory content: neutral, never "wrong", never a tally. */
@@ -244,6 +306,7 @@ export class MissionRunner {
   private revealed = false
   private beacon: HintBeacon
   private people = new Map<string, Person>()
+  private disposed = false
 
   /** One entry per finished step, in order. Checkpoint D aggregates from the event log. */
   readonly outcomes: (Outcome | null)[]
@@ -297,6 +360,18 @@ export class MissionRunner {
     this.deps.ui.hideAnswerCard()
     this.deps.ui.hideInstruction()
     this.deps.ui.setHint(null)
+  }
+
+  /**
+   * Retires this runner for good. A level is one runner, and switching levels builds a
+   * new one — without this the old runner's beacon would stay parented to the world and
+   * a second attempt would pulse two boxes at once.
+   */
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.reset()
+    this.beacon.dispose()
   }
 
   /** Called once per frame from the game loop, in every state. */
@@ -355,11 +430,15 @@ export class MissionRunner {
 
     const text = instructionOf(step)
     this.deps.ui.setHint(null)
-    this.deps.ui.showInstruction(`Step ${index + 1} of ${this.steps.length}`, text)
+    this.deps.ui.showInstruction(
+      this.deps.levelLabel,
+      `Step ${index + 1} of ${this.steps.length}`,
+      text
+    )
     speak(text)
 
     if (step.type === 'recall') {
-      const cards = this.choiceCards(step.choices)
+      const cards = this.choiceCards(step, step.choices)
       // §4.2's last resort: "All choice rendering fails → skip the step, outcome
       // `skipped`." Validation rejects a pack whose choices name nobody, so this is
       // defensive rather than routine — but a question with nothing on it must not sit
@@ -445,7 +524,7 @@ export class MissionRunner {
       if (step.type === 'recall') {
         // Swap to the reduced choices, always keeping the answer.
         this.deps.ui.updateAnswerCard({
-          choices: this.choiceCards(this.reduce(step)),
+          choices: this.choiceCards(step, this.reduce(step)),
           note: null
         })
       } else {
@@ -482,6 +561,7 @@ export class MissionRunner {
     // one on screen before playing anything.
     const at = this.index
     speak(step.hints.guide, () => {
+      if (step.choiceType !== 'person') return
       if (this.running && this.index === at && this.revealed) this.deps.voices.play(step.answer)
     })
   }
@@ -519,7 +599,8 @@ export class MissionRunner {
     // Every card speaks with its own voice, whichever one was picked. Playing the voice
     // only for the answer would be a correctness signal, which §5.4 rules out as surely
     // as a red cross does. Missing voice → silence (§4.2), never a beep or a buzz.
-    this.deps.voices.play(id)
+    // A `text` choice names an event, not a person, so there is no voice to play.
+    if (step.choiceType === 'person') this.deps.voices.play(id)
 
     if (this.revealed) {
       // The answer was already given, so this is not the player recalling it (§4.3).
@@ -565,12 +646,18 @@ export class MissionRunner {
    * the choices, and the style must not change halfway through a question. The UI
    * re-checks the invariant independently when it renders.
    *
-   * A choice with no person behind it is dropped rather than rendered as a bare id.
-   * Validation rejects such a pack outright, so the only way to reach that is a world
-   * and pack that disagree at runtime — and an empty list is what `beginStep` reads as
-   * §4.2's "all choice rendering fails".
+   * A choice with nothing behind it — no person, or no matching `options` entry — is
+   * dropped rather than rendered as a bare id. Validation rejects such a pack outright,
+   * so the only way to reach that is a world and pack that disagree at runtime — and an
+   * empty list is what `beginStep` reads as §4.2's "all choice rendering fails".
+   *
+   * A `text` question never has portraits or voices to begin with, so it skips the
+   * photo decision entirely and always renders text cards. That is the same shape §4.2
+   * falls back to, which is why the no-mixing rule needs no special case here.
    */
-  private choiceCards(ids: string[]): ChoiceCard[] {
+  private choiceCards(step: RecallStep, ids: string[]): ChoiceCard[] {
+    if (step.choiceType === 'text') return this.textCards(step, ids)
+
     const style = this.deps.media.cardStyle(this.deps.mission.id, this.index)
     const cards: ChoiceCard[] = []
     for (const id of ids) {
@@ -586,6 +673,25 @@ export class MissionRunner {
         photoUrl: style === 'photo' ? this.deps.media.photoFor(person.id) : null,
         // Present whether or not the card shows a photo: a text card can still speak.
         hasVoice: this.deps.media.voiceFor(person.id) !== null
+      })
+    }
+    return cards
+  }
+
+  private textCards(step: RecallStep, ids: string[]): ChoiceCard[] {
+    const cards: ChoiceCard[] = []
+    for (const id of ids) {
+      const option = step.options?.find((o) => o.id === id)
+      if (!option) {
+        console.warn(`[smriti] choice id absent from options, dropping it: ${id}`)
+        continue
+      }
+      cards.push({
+        id: option.id,
+        name: option.label,
+        relationship: option.detail ?? '',
+        photoUrl: null,
+        hasVoice: false
       })
     }
     return cards

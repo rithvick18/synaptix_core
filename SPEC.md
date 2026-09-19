@@ -54,9 +54,16 @@ blockers may differ freely; the ids may not.
 | Kind | Required ids |
 | --- | --- |
 | rooms | `livingRoom`, `kitchen` |
-| interactables | `water-jug` |
-| hintTargets | `kitchenDoor`, `water-jug` |
+| interactables | `water-jug`, `radio`, `wall-photo` |
+| hintTargets | `kitchenDoor`, `livingArch`, `kitchenArch`, `water-jug`, `radio`, `wall-photo` |
 | anchors | `livingRoomWall`, `bedsideFrame`, `audioSource` |
+
+`radio` and `wall-photo` joined the floor with the three levels (§4.5): levels 2 and 3
+are built from them. They are the *same objects* as the `audioSource` and
+`livingRoomWall` anchors — a world mounts personalisation on them and the player walks up
+and looks at them, and nothing about the anchor contract changes. `livingArch` and
+`kitchenArch` joined the hint targets because "go to the living room" has no door to
+point at.
 
 A pack referencing an id absent from the active world is a load-time rejection (§5.2).
 
@@ -64,6 +71,14 @@ A pack referencing an id absent from the active world is a load-time rejection (
 interactables than the table lists; a pack may only rely on the ones above.
 `proceduralHouse.ts` currently also provides the rooms `bedroom`, `bathroom` and
 `hallway`, and the interactables `frontDoor`, `bedroomDoor` and `bathroomDoor`.
+
+**Every required interactable must be reachable, and that is measured.** `debug.canFocus`
+walks the standable floor around a target, aims at it from each spot and runs the real
+`Interaction.update` — the same 2.5 m limit and the same ray–Box3 occlusion test a
+player's crosshair goes through (§5.2) — and reports the nearest spot that focuses it.
+`npm run check:offline` runs it on all three. This is the same rule as `auditDoorways`:
+clearance is measured, never eyeballed. It caught a framed photograph mounted at the
+wrong yaw, lying across the east wall with a third of it outside the house.
 
 ### 1.1 `proceduralHouse.ts` — the default, built first
 
@@ -250,9 +265,53 @@ src/
 }
 ```
 
-**Checkpoint B ships one bundled fixture** at `src/fixtures/mission.fixture.json` using this
-exact schema, imported directly. No fetch, no validation, no media. C replaces it with real
-loading. B must not invent a different shape.
+**Checkpoint B shipped one bundled fixture** at `src/fixtures/mission.fixture.json` using
+this exact schema, imported directly. No fetch, no validation, no media. C replaced it
+with real loading and deleted the fixture.
+
+#### Additions for multiple levels
+
+`missions` carries **three** entries in the packs this repository ships, and each is a
+level. Three fields were added; everything above is unchanged, and a pack written against
+the example above still validates.
+
+| Field | Where | Meaning |
+| --- | --- | --- |
+| `description` | on a mission | One caregiver-written line for the level-selection screen. Optional: a pack that omits it gets a warning and a blank line, never an engine-written summary (§2). |
+| `choiceType` | on a `recall` step | `"person"` (the default when omitted) or `"text"`. |
+| `options` | on a `recall` step | Required when `choiceType` is `"text"`, forbidden otherwise. |
+| `demo` | at the root | `{ "fictional": true, "notice": "…" }`. Optional; shown on the level-selection screen when present. |
+
+**Two choice formats, one set of rules.** A question about *who* somebody is names people;
+a question about *what happened* has no person behind its choices, so the caregiver writes
+the labels out:
+
+```json
+{ "type": "recall",
+  "question": "What were you all celebrating that day?",
+  "choiceType": "text",
+  "options": [
+    { "id": "bihu",     "label": "Bihu",              "detail": "The spring festival, at home" },
+    { "id": "wedding",  "label": "A wedding",         "detail": "Rupa's niece, in Guwahati" },
+    { "id": "birthday", "label": "Ananya's birthday", "detail": "Her sixteenth" }
+  ],
+  "choices": ["bihu", "wedding", "birthday"],
+  "answer": "bihu",
+  "reducedChoices": ["bihu", "birthday"],
+  "hints": { "repeat": "…", "highlight": "reduce", "guide": "…" } }
+```
+
+`choices` is a list of ids in **both** formats. What differs is only what an id must name:
+a `person` choice must name somebody in `people`, a `text` choice must name one of that
+step's own `options`. Answer membership and `reducedChoices` are checked identically in
+both (§4.2), so neither format can skip a check the other gets. A `text` question always
+renders text cards — there is no portrait to mix in, so §4.2's no-mixing rule needs no
+special case.
+
+**`demo` is declared, never inferred.** A pack is demonstration content only if it says so.
+The two packs here are fictional and say so on screen; a caregiver pack describing a real
+patient omits the block and nothing is labelled. §2's rule is unchanged by this: authoring
+a fictional pack is authoring content, and the engine still invents nothing at runtime.
 
 ### 4.2 Pack validation — at load, reporting all problems at once
 
@@ -266,6 +325,13 @@ loading. B must not invent a different shape.
 | **Any** recall photo fails to load | **Apply the same text-only card style to every choice in that question.** Never mix photo and text cards — the odd one out identifies the answer |
 | All choice rendering fails | Skip the step, outcome `skipped` |
 | `reducedChoices` missing the answer | Ignore `reducedChoices`, warn |
+| `choiceType` neither `person` nor `text` | **Reject pack** — never guessed at |
+| A `text` question with no `options` | **Reject pack** |
+| A `choices` id missing from that step's `options` (text format) | **Reject pack** |
+| `options` on a `person` question | **Reject pack** — a category error, not a harmless extra |
+| An `options` entry no `choices` id names | Ignore it, warn |
+| Two missions sharing an `id` | **Reject pack** — the export addresses levels by id |
+| A mission with no `description` | Blank line on the level screen, warn |
 
 ### 4.3 Completion outcomes — four values, never merged
 
@@ -304,6 +370,15 @@ type Event =
 Summary fields: `completionTime`, `hintsUsed`, `maxHintLevel`, `roomsVisited`,
 `answerLatency`, `timeToReveal`, and a count per `Outcome`.
 
+- **`roomsVisited` is the distinct set; `roomEntries` is how many times a room was
+  entered.** Level 2 walks living room → kitchen → living room, so "2 rooms" is true and
+  says nothing about the walking that was the whole level. Both are reported and neither
+  substitutes for the other.
+- **With more than one recall step, `answerLatency` and `timeToReveal` are means**, and
+  `recallAnswered` / `recallRevealed` say how many went into each — a mean of one is never
+  to be mistaken for a mean of several. **The per-step values are always kept**: every
+  question keeps its own latency in `summary.steps[]`, and the means never replace them.
+
 - **`answerLatency` is `null`** when the step ended `revealed` or `skipped`. Time from
   `question_shown` to the reveal is recorded separately as `timeToReveal`. Never fold them
   together — a fast reveal would otherwise look like a fast correct answer.
@@ -314,6 +389,45 @@ Summary fields: `completionTime`, `hintsUsed`, `maxHintLevel`, `roomsVisited`,
 - Pause stops all timers; subtract paused time from every duration.
 - **Claim nothing clinical.** Label the summary "auxiliary interaction measures — not
   diagnostic" *on screen*. Compare only against the same patient's past sessions.
+
+**An export describes one attempt at one level.** It carries the level (mission id, index
+and title), the attempt id and number, the pack id, and the per-step results. Events from
+two attempts are never combined, and that is a property of the recorder rather than a rule
+the caller remembers: `Recorder.beginAttempt` empties the log, and it is the only way to
+open an attempt. The export writes out `session.missionIdsInLog` so a reader can check
+rather than trust — one entry is the only correct value.
+
+### 4.5 Levels
+
+A **level is a mission**; an **attempt** is one play of a level. The packs here ship three,
+in this order:
+
+| # | id | Steps | What the player does |
+| --- | --- | --- | --- |
+| 1 | `water` | navigate · find · recall | To the kitchen, find the water jug, one family-photo question |
+| 2 | `morning-walk` | navigate · find · navigate · find · navigate · find | Living room + radio, kitchen + jug, back to the living room + framed photograph |
+| 3 | `familiar-memories` | navigate · find · recall · recall | The framed photograph, then who is in it, then what the day was |
+
+Level 1 is Checkpoint B's mission unchanged. Level 2 is the repeated-navigate mission §6
+anticipated; level 3 is the multiple-questions one.
+
+- **A level-selection screen lists all three**, each with its title, its caregiver-written
+  description and a Start button. Nothing is locked behind finishing anything else.
+- **The level and the current task are on screen throughout play** — "Level 2 of 3 ·
+  Morning walk" above "Step 3 of 6" above the instruction.
+- **The summary offers Download JSON, Replay, Level selection, and Next level** where
+  there is one. On the last level the Next button is absent rather than disabled.
+- **`R` replays the selected level. Switching levels starts a fresh attempt**, resetting
+  everything §5.6 lists plus the level's own state: the previous runner is *disposed*, not
+  reused, because its hint beacon is parented to the world.
+- **A finished result is preserved until another attempt is chosen.** Returning to the
+  level list does not clear the log; only starting an attempt does, so a finished level
+  stays exportable while the player decides what to do next.
+
+**An instruction must describe the interaction that exists.** Pressing `E` on the jug, the
+radio or the photograph focuses and looks at it. Nothing is carried, poured, filled,
+fetched or switched on, so no title, description, instruction or hint says that it is —
+the check in `tools/checks/pack.check.ts` fails the pack if one does.
 
 ---
 
@@ -395,8 +509,14 @@ in the kitchen.
 
 Resets: player **position and yaw** to `spawn` · current room membership · all highlights and
 the focused object · mission step index · every timer · hint levels · selected answers ·
-pointer-lock state · audio playback · the telemetry event log. Then re-runs §5.5's containment
-check. Verify pause, resume and restart before starting mission 2.
+pointer-lock state · **held keys** · audio playback · the telemetry event log. Then re-runs
+§5.5's containment check.
+
+**Starting a level is the same reset.** Replay, "next level", `R` and the first start all
+go through one function, so the list above is the list for every one of them; a level
+switch adds disposing the previous runner. Held keys are on the list because a key held
+down through a level switch keeps moving the player into the new attempt — `keyup` never
+arrives while an overlay has the pointer.
 
 ---
 
@@ -409,8 +529,10 @@ check. Verify pause, resume and restart before starting mission 2.
 | C | Real packs, validation, media, injection | `?patient=raju` changes photos, **audible voice** and name; a deliberately broken pack is rejected listing every problem at once; a missing recall photo renders all choices as text |
 | D | Recording, aggregation, export, summary, offline, recording | Export has all four outcome counts, `answerLatency: null` on revealed steps, `timeToReveal` present; `dist/` runs with the network fully offline; 60 s screen recording exists |
 
-Mission 2 only after D passes. It needs repeated-navigate steps, audio-cue steps and multiple
-questions per mission — roughly 90 minutes, not 10.
+| E | Three levels, level selection, per-attempt export | All three levels play through; the level and task are on screen; the summary offers Replay / Level selection / Next; an export names its level, attempt and pack and covers exactly one attempt; every find target is *measured* reachable (§1) |
+
+Levels 2 and 3 are the "mission 2" this table anticipated: repeated-navigate steps, and
+multiple questions per mission. The audio-cue step type was not built — see §8.
 
 ---
 
@@ -441,3 +563,18 @@ report that alongside. Check the cap by timing `requestAnimationFrame` on a blan
   with the reason.
 - Update SPEC.md when a decision changes. It is the shared source of truth.
 - Commit at every checkpoint.
+- **A check nobody else can run is not a check.** Verification lives in the repository and
+  is wired to an npm script:
+
+  | Command | What it does |
+  | --- | --- |
+  | `npm run check` | Typechecks the harnesses against `src/`, then runs them headlessly under node — pack validation in both choice formats, the hint ladder, aggregation, level switching |
+  | `npm run check:offline` | Builds nothing; serves `dist/` with the vendored `vite preview` and drives all three levels in headless Chrome with DNS disabled |
+  | `npm run build` | `tsc && vite build` |
+
+  The offline check typechecks nothing and the unit checks open no browser; both are
+  needed. Run `npm run build` before `npm run check:offline`.
+
+**Not built.** An audio-cue step type — a step whose prompt is a sound rather than a
+sentence — was anticipated in §6 and is still not implemented. The three levels use
+`navigate`, `find` and `recall` only.

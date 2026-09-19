@@ -25,8 +25,20 @@ export interface WorldSource {
 }
 
 export const REQUIRED_ROOMS = ['livingRoom', 'kitchen'] as const
-export const REQUIRED_INTERACTABLES = ['water-jug'] as const
-export const REQUIRED_HINT_TARGETS = ['kitchenDoor', 'water-jug'] as const
+/**
+ * `radio` and `wall-photo` joined the floor when the three levels landed: levels 2 and 3
+ * are built from them, so a world that cannot supply them cannot run the packs this
+ * repository ships. `livingArch` joined the hint targets for the same reason — "go to
+ * the living room" has no door to point at.
+ */
+export const REQUIRED_INTERACTABLES = ['water-jug', 'radio', 'wall-photo'] as const
+export const REQUIRED_HINT_TARGETS = [
+  'kitchenDoor',
+  'livingArch',
+  'water-jug',
+  'radio',
+  'wall-photo'
+] as const
 export const REQUIRED_ANCHORS = ['livingRoomWall', 'bedsideFrame', 'audioSource'] as const
 
 /**

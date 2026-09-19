@@ -14,6 +14,11 @@
 export interface ChoiceCard {
   id: string
   name: string
+  /**
+   * The second line of the card: a person's relationship, or a text option's `detail`.
+   * Empty when the caregiver wrote none — the line is then omitted rather than shown
+   * blank, so a set of bare labels does not sit above a row of empty space.
+   */
   relationship: string
   /**
    * A photo URL that is already known to decode, or null for a text card (§4.2).
@@ -48,6 +53,38 @@ export interface LoadStage {
   note?: string | null
 }
 
+/** One row of the level-selection screen. All three levels are always available. */
+export interface LevelChoice {
+  /** "Level 1", "Level 2" — the engine's own positional label, not pack content. */
+  ordinal: string
+  title: string
+  /** The caregiver's one-line description, or empty if the pack wrote none. */
+  description: string
+  /** How many steps, and of what kind — engine chrome, counted from the mission. */
+  shape: string
+  /** Set once this level has been finished at least once this page-load. */
+  finished: boolean
+  onStart: () => void
+}
+
+/**
+ * The level-selection screen (§9 of the level brief). Every level is startable at any
+ * time — nothing is locked behind finishing another, because a caregiver setting up a
+ * session should be able to open the one they want.
+ */
+export interface LevelSelectView {
+  title: string
+  subtitle: string
+  levels: LevelChoice[]
+  /**
+   * Shown when the pack declares itself demonstration content. A pack describing a real
+   * patient carries no notice and this is null, so the label can never be mistaken for
+   * decoration that is always there.
+   */
+  demoNotice?: string | null
+  keys?: string
+}
+
 /** What the summary card renders. Telemetry.ts computes it; ui.ts only lays it out. */
 export interface SummaryView {
   title: string
@@ -59,7 +96,13 @@ export interface SummaryView {
   notDiagnostic: string
   keys?: string
   onExport: () => void
-  onRestart: () => void
+  /** Another attempt at the level just finished. */
+  onReplay: () => void
+  /** Back to the level-selection screen. */
+  onLevels: () => void
+  /** Null on the last level — the button is then absent rather than disabled. */
+  onNext?: (() => void) | null
+  nextLabel?: string | null
 }
 
 /** One row of the pack-rejection list. Mirrors MemoryPack's `PackProblem`. */
@@ -125,6 +168,9 @@ canvas { display: block; }
   border: 1px solid rgba(255,255,255,.14); font-size: 17px; line-height: 1.35; }
 #instruction .step { display: block; margin-bottom: 3px; font-size: 11.5px;
   letter-spacing: .09em; text-transform: uppercase; color: #8d8880; }
+/* Which level is being played, above the step — on screen for the whole attempt. */
+#instruction .level { display: block; margin-bottom: 4px; font-size: 12.5px;
+  font-weight: 600; letter-spacing: .03em; color: #ffd98a; }
 #hint { padding: 9px 16px; border-radius: 10px; background: rgba(255,217,138,.13);
   border: 1px solid rgba(255,217,138,.35); color: #ffe7b4; font-size: 14.5px; }
 #hint[hidden] { display: none; }
@@ -210,6 +256,28 @@ canvas { display: block; }
   white-space: nowrap; color: #8d8880; }
 #overlay .stages div.active .count { color: #ffd98a; }
 #overlay .stages .mark { display: inline-block; width: 1.1em; }
+
+/* --- Level selection. Three rows, each a title, a line of description and Start. --- */
+#overlay .card.levels { max-width: 640px; width: min(640px, 100%); }
+#overlay .levelList { margin: 20px 0 0; display: flex; flex-direction: column; gap: 10px; }
+#overlay .levelList div { display: grid; grid-template-columns: 1fr auto; gap: 14px;
+  align-items: center; padding: 14px 16px; border-radius: 12px; text-align: left;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); }
+#overlay .levelList .ord { display: block; font-size: 11.5px; letter-spacing: .09em;
+  text-transform: uppercase; color: #8d8880; }
+#overlay .levelList .name { display: block; margin-top: 2px; font-size: 17px; color: #f2efe9; }
+#overlay .levelList .desc { display: block; margin-top: 4px; font-size: 13px; line-height: 1.4;
+  color: #b5b0a6; }
+#overlay .levelList .shape { display: block; margin-top: 5px; font-size: 11.5px; color: #6f6b64; }
+#overlay .levelList .done { color: #ffd98a; }
+#overlay .levelList button { padding: 9px 20px; border-radius: 10px; font: inherit;
+  cursor: pointer; border: 1px solid #ffd98a; background: #ffd98a; color: #14161a;
+  font-weight: 600; }
+#overlay .levelList button:hover { filter: brightness(1.07); }
+/* The pack's own statement that its people and memories are invented. */
+#overlay .demo { margin: 16px auto 0; padding: 9px 14px; border-radius: 9px;
+  background: rgba(255,217,138,.1); border: 1px solid rgba(255,217,138,.3);
+  color: #ffe7b4; font-size: 12.5px; line-height: 1.45; }
 
 /* --- Summary card (§4.4). No score, no grade, no colour-coded judgement. --- */
 #overlay .card.summary { max-width: 640px; width: min(640px, 100%); }
@@ -321,13 +389,13 @@ export class UI {
   // --- Overlays ---------------------------------------------------------------
 
   showLoading(message: string): void {
-    this.overlayCard.classList.remove('wide', 'summary')
+    this.overlayCard.classList.remove('wide', 'summary', 'levels')
     this.overlayCard.innerHTML = `<h1>Smriti</h1><p>${message}</p><div id="bar"><i></i></div>`
     this.overlayEl.hidden = false
   }
 
   showMessage(title: string, lines: string[], keys?: string): void {
-    this.overlayCard.classList.remove('wide', 'summary')
+    this.overlayCard.classList.remove('wide', 'summary', 'levels')
     this.overlayCard.innerHTML =
       `<h1>${title}</h1>${lines.map((l) => `<p>${l}</p>`).join('')}` +
       (keys ? `<div class="keys">${keys}</div>` : '')
@@ -343,7 +411,7 @@ export class UI {
    * "11/12, 1 fell back" rather than a bar that silently reached the end.
    */
   showLoadingStages(title: string, stages: LoadStage[]): void {
-    this.overlayCard.classList.remove('wide', 'summary')
+    this.overlayCard.classList.remove('wide', 'summary', 'levels')
     this.overlayCard.innerHTML =
       `<h1>Smriti</h1><p>${title}</p>` +
       `<div class="stages">${stages
@@ -366,6 +434,47 @@ export class UI {
   }
 
   /**
+   * The level-selection screen. All three levels are listed and all three are startable
+   * — nothing is gated behind finishing another one.
+   *
+   * The demo notice is rendered only when the pack carries one. That is the difference
+   * between the two packs in this repository, whose people and memories are invented,
+   * and a caregiver pack describing somebody real: the label belongs to the content, so
+   * it comes from the file rather than being painted on by the engine.
+   */
+  showLevelSelect(view: LevelSelectView): void {
+    this.overlayCard.classList.remove('wide', 'summary')
+    this.overlayCard.classList.add('levels')
+    this.overlayCard.innerHTML =
+      `<h1>${view.title}</h1>` +
+      `<p>${view.subtitle}</p>` +
+      `<div class="levelList">${view.levels
+        .map(
+          (level, i) =>
+            `<div><span>` +
+            `<span class="ord">${level.ordinal}` +
+            (level.finished ? ` <span class="done">· finished</span>` : '') +
+            `</span>` +
+            `<span class="name">${level.title}</span>` +
+            (level.description ? `<span class="desc">${level.description}</span>` : '') +
+            `<span class="shape">${level.shape}</span>` +
+            `</span>` +
+            `<button data-level="${i}">${level.finished ? 'Play again' : 'Start'}</button></div>`
+        )
+        .join('')}</div>` +
+      (view.demoNotice ? `<div class="demo">${view.demoNotice}</div>` : '') +
+      (view.keys ? `<div class="keys">${view.keys}</div>` : '')
+
+    for (const button of this.overlayCard.querySelectorAll<HTMLButtonElement>('button[data-level]')) {
+      button.addEventListener('click', (e) => {
+        e.stopPropagation()
+        view.levels[Number(button.dataset.level)]?.onStart()
+      })
+    }
+    this.overlayEl.hidden = false
+  }
+
+  /**
    * §4.4's summary. The rules it has to obey are all negative ones, so they are worth
    * stating where the markup is:
    *
@@ -378,7 +487,7 @@ export class UI {
    * - **The not-diagnostic label is on screen**, not only in the exported file.
    */
   showSummary(view: SummaryView): void {
-    this.overlayCard.classList.remove('wide')
+    this.overlayCard.classList.remove('wide', 'levels')
     this.overlayCard.classList.add('summary')
 
     const ms = (value: number | null): string =>
@@ -408,22 +517,26 @@ export class UI {
       `<div class="notdx">${view.notDiagnostic}</div>` +
       `<div class="actions">` +
       `<button class="primary" data-act="export">Download JSON</button>` +
-      `<button data-act="restart">Start again</button>` +
+      `<button data-act="replay">Replay</button>` +
+      `<button data-act="levels">Level selection</button>` +
+      // Absent rather than disabled on the last level: a greyed button that never does
+      // anything is a thing to puzzle over, and this screen is read by tired people.
+      (view.onNext ? `<button data-act="next">${view.nextLabel ?? 'Next level'}</button>` : '') +
       `</div>` +
       (view.keys ? `<div class="keys">${view.keys}</div>` : '')
 
-    this.overlayCard
-      .querySelector<HTMLButtonElement>('button[data-act="export"]')!
-      .addEventListener('click', (e) => {
+    const on = (act: string, handler: (() => void) | null | undefined): void => {
+      const button = this.overlayCard.querySelector<HTMLButtonElement>(`button[data-act="${act}"]`)
+      if (!button || !handler) return
+      button.addEventListener('click', (e) => {
         e.stopPropagation()
-        view.onExport()
+        handler()
       })
-    this.overlayCard
-      .querySelector<HTMLButtonElement>('button[data-act="restart"]')!
-      .addEventListener('click', (e) => {
-        e.stopPropagation()
-        view.onRestart()
-      })
+    }
+    on('export', view.onExport)
+    on('replay', view.onReplay)
+    on('levels', view.onLevels)
+    on('next', view.onNext)
 
     this.overlayEl.hidden = false
   }
@@ -434,7 +547,7 @@ export class UI {
    * one list, not one reload per fault.
    */
   showRejection(title: string, subtitle: string, problems: RenderedProblem[], keys?: string): void {
-    this.overlayCard.classList.remove('summary')
+    this.overlayCard.classList.remove('summary', 'levels')
     this.overlayCard.classList.add('wide')
     this.overlayCard.innerHTML =
       `<h1>${title}</h1><p>${subtitle}</p>` +
@@ -451,7 +564,7 @@ export class UI {
 
   hideOverlay(): void {
     this.overlayEl.hidden = true
-    this.overlayCard.classList.remove('wide', 'summary')
+    this.overlayCard.classList.remove('wide', 'summary', 'levels')
   }
 
   get overlayVisible(): boolean {
@@ -481,9 +594,16 @@ export class UI {
 
   // --- Mission banner ----------------------------------------------------------
 
-  /** `stepLabel` is positional context ("Step 2 of 3"), never a score. */
-  showInstruction(stepLabel: string, instruction: string): void {
-    this.instructionEl.innerHTML = `<span class="step">${stepLabel}</span>${instruction}`
+  /**
+   * `levelLabel` and `stepLabel` are both positional context — "Level 2 of 3 · Morning
+   * walk", "Step 3 of 6" — never a score. The level line stays on screen for the whole
+   * attempt so the player and whoever is sitting with them can always see which level
+   * is running as well as what it is asking for.
+   */
+  showInstruction(levelLabel: string, stepLabel: string, instruction: string): void {
+    this.instructionEl.innerHTML =
+      `<span class="level">${levelLabel}</span>` +
+      `<span class="step">${stepLabel}</span>${instruction}`
     this.missionEl.hidden = false
   }
 
@@ -556,7 +676,7 @@ export class UI {
             ` data-id="${c.id}">` +
             (photos ? `<img class="portrait" src="${c.photoUrl}" alt="" draggable="false">` : '') +
             `<span class="name">${c.name}</span>` +
-            `<span class="rel">${c.relationship}</span>` +
+            (c.relationship ? `<span class="rel">${c.relationship}</span>` : '') +
             (c.hasVoice ? `<span class="voice">Tap to hear them</span>` : '') +
             `<span class="tag">The answer</span></button>`
         )

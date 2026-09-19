@@ -1,5 +1,5 @@
 {
-  "_comment": "Deliberately invalid. Load with ?patient=broken to see SPEC.md §4.2 report every problem in one pass. Nine rejections and one warning, none of which depend on any other being fixed first.",
+  "_comment": "Deliberately invalid. Load with ?patient=broken to see SPEC.md §4.2 report every problem in one pass. Fifteen rejections and two warnings, none of which depend on any other being fixed first. The second mission exists so the text-choice format is broken here too, and so a duplicate mission id is reported.",
   "patient": { "nickname": "Nobody" },
   "people": [
     { "id": "asha", "name": "Asha", "relationship": "Daughter" },
@@ -9,31 +9,78 @@
   "anchors": {
     "hallwayShelf": "/packs/broken/shelf.jpg"
   },
-  "missions": [{
-    "id": "broken",
-    "title": "Every §4.2 rejection at once",
-    "steps": [
-      { "type": "navigate", "targetRoom": "conservatory",
-        "instruction": "Please go to the conservatory.",
-        "hints": { "repeat": "Please go to the conservatory.",
-                   "highlight": "gardenGate",
-                   "guide": "It is past the kitchen." } },
-      { "type": "find", "targetObject": "kettle",
-        "instruction": "Can you find the kettle?",
-        "hints": { "repeat": "Can you find the kettle?",
-                   "highlight": "water-jug",
-                   "guide": "It is by the sink." } },
-      { "type": "recall",
-        "question": "Who came to tea on Sunday?",
-        "choices": ["asha", "somebody"],
-        "answer": "nobody",
-        "reducedChoices": ["asha"],
-        "hints": { "repeat": "Who came to tea on Sunday?",
-                   "highlight": "reduce",
-                   "guide": "It was Asha." } },
-      { "type": "remember",
-        "instruction": "This step type does not exist.",
-        "hints": { "repeat": "x", "highlight": "reduce", "guide": "y" } }
-    ]
-  }]
+  "missions": [
+    {
+      "id": "broken",
+      "title": "Every §4.2 rejection at once",
+      "steps": [
+        { "type": "navigate", "targetRoom": "conservatory",
+          "instruction": "Please go to the conservatory.",
+          "hints": { "repeat": "Please go to the conservatory.",
+                     "highlight": "gardenGate",
+                     "guide": "It is past the kitchen." } },
+        { "type": "find", "targetObject": "kettle",
+          "instruction": "Can you find the kettle?",
+          "hints": { "repeat": "Can you find the kettle?",
+                     "highlight": "water-jug",
+                     "guide": "It is by the sink." } },
+        { "type": "recall",
+          "question": "Who came to tea on Sunday?",
+          "choices": ["asha", "somebody"],
+          "answer": "nobody",
+          "reducedChoices": ["asha"],
+          "hints": { "repeat": "Who came to tea on Sunday?",
+                     "highlight": "reduce",
+                     "guide": "It was Asha." } },
+        { "type": "remember",
+          "instruction": "This step type does not exist.",
+          "hints": { "repeat": "x", "highlight": "reduce", "guide": "y" } }
+      ]
+    },
+    {
+      "id": "broken",
+      "title": "The text-choice format, broken the same way",
+      "steps": [
+        { "type": "recall",
+          "question": "Which choiceType is this?",
+          "choiceType": "freeform",
+          "choices": ["a", "b"],
+          "answer": "a",
+          "hints": { "repeat": "Which choiceType is this?",
+                     "highlight": "reduce",
+                     "guide": "Neither person nor text." } },
+        { "type": "recall",
+          "question": "A text question with no options at all.",
+          "choiceType": "text",
+          "choices": ["spring", "summer"],
+          "answer": "spring",
+          "hints": { "repeat": "A text question with no options at all.",
+                     "highlight": "reduce",
+                     "guide": "There is nothing to render." } },
+        { "type": "recall",
+          "question": "A text question whose choices do not match its options.",
+          "choiceType": "text",
+          "options": [
+            { "id": "spring", "label": "Spring" },
+            { "id": "summer" },
+            { "id": "spring", "label": "Spring again" },
+            { "id": "autumn", "label": "Autumn, never offered" }
+          ],
+          "choices": ["spring", "winter"],
+          "answer": "winter",
+          "hints": { "repeat": "A text question whose choices do not match its options.",
+                     "highlight": "reduce",
+                     "guide": "Winter is not an option." } },
+        { "type": "recall",
+          "question": "A person question carrying options it has no use for.",
+          "choiceType": "person",
+          "options": [{ "id": "asha", "label": "Asha" }, { "id": "vikram", "label": "Vikram" }],
+          "choices": ["asha", "vikram"],
+          "answer": "asha",
+          "hints": { "repeat": "A person question carrying options it has no use for.",
+                     "highlight": "reduce",
+                     "guide": "Labels come from people, not options." } }
+      ]
+    }
+  ]
 }

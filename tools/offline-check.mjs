@@ -219,10 +219,10 @@ try {
   let booted = false
   for (let i = 0; i < 120; i++) {
     await sleep(250)
-    booted = await cdp.eval('typeof window.__smriti === "object" && !!window.__smriti?.missions')
+    booted = await cdp.eval('typeof window.__smriti === "object" && !!window.__smriti?.debug')
     if (booted) break
   }
-  ok(booted, 'the app boots with the network disabled', 'window.__smriti.missions never appeared')
+  ok(booted, 'the app boots with the network disabled', 'window.__smriti.debug never appeared')
 
   if (booted) {
     // --- the world actually built ------------------------------------------
@@ -281,22 +281,79 @@ try {
       console.log('  §7 sampler not run (pass --perf); readout:', readout.replace(/\n/g, ' | '))
     }
 
-    // --- play the mission ---------------------------------------------------
-    await cdp.eval('document.body.click()')
-    await sleep(300)
-    // Restart into the kitchen so step 1 completes by §5.5 containment.
-    const restarted = await cdp.eval('window.__smriti.debug.restartInRoom("kitchen")')
-    console.log('  restartInRoom:', restarted)
-    await sleep(500)
+    // --- every level's targets are reachable --------------------------------
+    //
+    // "Ensure every target is reachable" is not something to take on trust. This runs
+    // the game's own probe: it walks the standable floor around each target, aims at it
+    // and runs the real `Interaction.update` — the same 2.5 m limit and the same
+    // ray-vs-Box3 occlusion test a player's crosshair goes through (§5.2).
+    const probes = JSON.parse(await cdp.eval('JSON.stringify(window.__smriti.debug.probeTargets())'))
+    console.log('\n  reachability probe (real raycast, real occlusion):')
+    for (const probe of probes) {
+      console.log(
+        `    ${probe.ok ? 'OK    ' : 'FAILED'}  ${probe.id.padEnd(11)}  ` +
+          (probe.ok
+            ? `${probe.distance} m from (${probe.from.x}, ${probe.from.z}) in ${probe.room} · "${probe.prompt}"`
+            : probe.reason)
+      )
+    }
+    ok(probes.length === 3, 'the three levels name three distinct find targets', `${probes.length}`)
+    for (const id of ['water-jug', 'radio', 'wall-photo']) {
+      const probe = probes.find((p) => p.id === id)
+      ok(probe?.ok === true, `a player can stand somewhere and focus the ${id}`, probe?.reason ?? 'absent')
+      ok(
+        probe?.ok !== true || probe.distance <= 2.5,
+        `the ${id} is focusable within the 2.5 m interaction limit`,
+        `${probe?.distance} m`
+      )
+      ok(
+        probe?.ok !== true || /Look at/.test(probe.prompt ?? ''),
+        `the ${id}'s prompt says "Look at" and claims no action the game does not perform`,
+        probe?.prompt ?? ''
+      )
+    }
     ok(
-      (await cdp.eval('window.__smriti.missions.stepIndex')) === 1,
-      '§5.5 restarting in the kitchen completes step 1'
+      probes.find((p) => p.id === 'radio')?.room === 'livingRoom',
+      'the radio is reachable from inside the living room'
+    )
+    ok(
+      probes.find((p) => p.id === 'wall-photo')?.room === 'livingRoom',
+      'the framed photograph is reachable from inside the living room'
     )
 
-    await cdp.eval('window.__smriti.missions.notifyInteract("water-jug")')
+    // --- the level-selection screen ----------------------------------------
+    const levelCard = await cdp.eval('document.querySelector("#overlay .card.levels")?.textContent ?? ""')
+    ok(levelCard.length > 0, 'the level-selection screen is the first thing shown')
+    for (const title of ['A glass of water', 'Morning walk', 'Familiar memories']) {
+      ok(levelCard.includes(title), `the level list offers "${title}"`)
+    }
+    ok(
+      levelCard.toLowerCase().includes('fictional demo data'),
+      'the demo pack is labelled as fictional demo data on screen',
+      levelCard.slice(0, 160)
+    )
+    const startButtons = await cdp.eval('document.querySelectorAll("#overlay button[data-level]").length')
+    ok(startButtons === 3, 'all three levels have a Start button', `got ${startButtons}`)
+
+    // --- level 1: the original mission, preserved ---------------------------
+    await cdp.eval('document.querySelector(\'#overlay button[data-level="0"]\').click()')
+    await sleep(400)
+    // Start it again inside the kitchen so step 1 completes by §5.5 containment.
+    const restarted = await cdp.eval('window.__smriti.debug.restartInRoom("kitchen", 0)')
+    console.log('\n  restartInRoom:', restarted)
+    await sleep(500)
+    ok(
+      (await cdp.eval('window.__smriti.runner.stepIndex')) === 1,
+      '§5.5 starting level 1 in the kitchen completes step 1'
+    )
+    const banner = await cdp.eval('document.querySelector("#instruction")?.textContent ?? ""')
+    ok(banner.includes('Level 1 of 3'), 'the current level is on screen during play', banner)
+    ok(banner.includes('Step 2 of 3'), 'and so is the current task', banner)
+
+    await cdp.eval('window.__smriti.runner.notifyInteract("water-jug")')
     await sleep(200)
     ok(
-      (await cdp.eval('window.__smriti.missions.stepIndex')) === 2,
+      (await cdp.eval('window.__smriti.runner.stepIndex')) === 2,
       'the find step completes on interact'
     )
 
@@ -320,10 +377,21 @@ try {
     }
     ok(summaryText.includes('answer latency'), '§4.4 answer latency is on the summary')
     ok(summaryText.includes('time to reveal'), '§4.4 time to reveal is its own row')
+    ok(summaryText.includes('Level 1 of 3'), 'the summary names the level it is summarising')
+
+    const actions = JSON.parse(
+      await cdp.eval(
+        'JSON.stringify([...document.querySelectorAll("#overlay .actions button")].map(b => b.dataset.act))'
+      )
+    )
+    ok(actions.includes('export'), 'the summary offers Download JSON')
+    ok(actions.includes('replay'), 'the summary offers Replay')
+    ok(actions.includes('levels'), 'the summary offers Level selection')
+    ok(actions.includes('next'), 'the summary offers Next level when there is one')
 
     const summary = JSON.parse(await cdp.eval('JSON.stringify(window.__smriti.summary())'))
-    console.log('  summary:', JSON.stringify(summary.outcomes), 'completion', summary.completionTimeMs)
-    ok(summary.completed === true, 'the mission completed offline')
+    console.log('  level 1 summary:', JSON.stringify(summary.outcomes), 'completion', summary.completionTimeMs)
+    ok(summary.completed === true, 'level 1 completed offline')
     ok(summary.outcomes.independent === 3, '§4.3 three independent steps', JSON.stringify(summary.outcomes))
     ok(Object.keys(summary.outcomes).length === 4, '§4.3 four outcome counts')
     ok(summary.steps[2].answerLatencyMs !== null, '§4.4 answerLatency present on an answered step')
@@ -333,6 +401,113 @@ try {
     ok(doc.format === 'smriti-telemetry', 'the JSON export builds offline')
     ok(doc.events.length > 5, 'the export carries the recorded log', `${doc.events.length} events`)
     ok(doc.notDiagnostic.includes('not diagnostic'), '§4.4 the export carries the label')
+    ok(doc.level.id === 'water', 'the export names the level played', JSON.stringify(doc.level))
+    ok(doc.patient.id === 'mira', 'the export names the pack')
+    ok(typeof doc.session.attemptId === 'string' && doc.session.attemptId.length > 0,
+       'the export names the attempt', doc.session.attemptId)
+    ok(doc.session.missionIdsInLog.length === 1, 'the export covers exactly one level')
+
+    // --- level 2: repeated room visits, all three targets --------------------
+    await cdp.eval('window.__smriti.debug.startLevel(1)')
+    await sleep(400)
+    ok((await cdp.eval('window.__smriti.level')) === 1, 'switching to level 2 selects it')
+    const afterSwitch = JSON.parse(await cdp.eval('JSON.stringify(window.__smriti.summary())'))
+    ok(afterSwitch.steps.length === 0, 'switching levels starts from an empty log')
+    ok(afterSwitch.outcomes.independent === 0, "level 1's outcomes do not carry over")
+    ok(afterSwitch.missionId === 'morning-walk', 'the new log names level 2', String(afterSwitch.missionId))
+    ok(
+      (await cdp.eval('JSON.stringify(window.__smriti.exportJson().session.missionIdsInLog)')) ===
+        '["morning-walk"]',
+      'requirement 7: the export never combines events from two attempts'
+    )
+    ok((await cdp.eval('window.__smriti.runner.steps.length')) === 6, 'level 2 has six steps')
+
+    // Walk it: living room → radio → kitchen → jug → living room → photograph.
+    const walk = [
+      ['room', 'livingRoom', 1],
+      ['interact', 'radio', 2],
+      ['room', 'kitchen', 3],
+      ['interact', 'water-jug', 4],
+      ['room', 'livingRoom', 5],
+      ['interact', 'wall-photo', 6]
+    ]
+    for (const [kind, id, expected] of walk) {
+      await cdp.eval(
+        kind === 'room'
+          ? `window.__smriti.runner.notifyRoom(${JSON.stringify(id)})`
+          : `window.__smriti.runner.notifyInteract(${JSON.stringify(id)})`
+      )
+      await sleep(120)
+      if (expected < 6) {
+        ok(
+          (await cdp.eval('window.__smriti.runner.stepIndex')) === expected,
+          `level 2 step ${expected} completes on ${kind} ${id}`
+        )
+      }
+    }
+    await sleep(300)
+    const two = JSON.parse(await cdp.eval('JSON.stringify(window.__smriti.summary())'))
+    console.log('  level 2 summary:', JSON.stringify(two.outcomes),
+                `rooms ${two.roomsVisited.join('/')} · ${two.roomEntries} entries`)
+    ok(two.completed === true, 'level 2 completes')
+    ok(two.steps.length === 6, 'level 2 records six step results')
+    ok(two.roomsVisited.length === 2, 'level 2 visits two distinct rooms')
+    ok(two.roomEntries === 3, 'level 2 counts the repeat visit to the living room', `${two.roomEntries}`)
+
+    // --- level 3: two recall steps, one of each choice format ----------------
+    await cdp.eval('window.__smriti.debug.startLevel(2)')
+    await sleep(400)
+    await cdp.eval('window.__smriti.runner.notifyRoom("livingRoom")')
+    await cdp.eval('window.__smriti.runner.notifyInteract("wall-photo")')
+    await sleep(300)
+    ok((await cdp.eval('window.__smriti.runner.stepIndex')) === 2, 'level 3 reaches the first question')
+
+    const q1Photos = await cdp.eval('document.querySelectorAll("#answer button.choice.photo").length')
+    ok(q1Photos === 3, 'level 3 question one shows three photo cards', `got ${q1Photos}`)
+    await cdp.eval('document.querySelector(\'#answer button.choice[data-id="bina"]\').click()')
+    await sleep(300)
+    ok((await cdp.eval('window.__smriti.runner.stepIndex')) === 3, 'level 3 reaches the second question')
+
+    const q2 = JSON.parse(
+      await cdp.eval(
+        'JSON.stringify([...document.querySelectorAll("#answer button.choice")].map(b => ' +
+          '({ id: b.dataset.id, photo: b.classList.contains("photo"), text: b.textContent })))'
+      )
+    )
+    ok(q2.length === 3, 'level 3 question two shows three cards', `got ${q2.length}`)
+    ok(q2.every((c) => !c.photo), 'the event question renders text cards, never portraits')
+    ok(q2.some((c) => c.text.includes('Bihu')), "the cards show the caregiver's own labels", JSON.stringify(q2.map(c => c.id)))
+    await cdp.eval('document.querySelector(\'#answer button.choice[data-id="bihu"]\').click()')
+    await sleep(400)
+
+    const three = JSON.parse(await cdp.eval('JSON.stringify(window.__smriti.summary())'))
+    console.log('  level 3 summary:', JSON.stringify(three.outcomes),
+                `latencies ${three.steps.filter((s) => s.type === 'recall').map((s) => s.answerLatencyMs).join(', ')} ms`)
+    ok(three.completed === true, 'level 3 completes')
+    ok(three.steps.length === 4, 'level 3 records four step results')
+    const recallSteps = three.steps.filter((s) => s.type === 'recall')
+    ok(recallSteps.length === 2, 'level 3 records two recall steps')
+    ok(
+      recallSteps.every((s) => s.answerLatencyMs !== null),
+      '§4.4 each answered question keeps its own latency'
+    )
+    ok(three.recallAnswered === 2, '§4.4 the session mean declares it is over two questions')
+    const lastDoc = JSON.parse(await cdp.eval('JSON.stringify(window.__smriti.exportJson())'))
+    ok(lastDoc.level.id === 'familiar-memories', 'the export names level 3', JSON.stringify(lastDoc.level))
+    ok(lastDoc.session.missionIdsInLog.length === 1, "level 3's export covers exactly one level")
+    ok(lastDoc.summary.steps.length === 4, 'the export carries per-step results')
+
+    // --- back to the level list ---------------------------------------------
+    await cdp.eval('document.querySelector(\'#overlay button[data-act="levels"]\').click()')
+    await sleep(300)
+    const backToList = await cdp.eval('document.querySelector("#overlay .card.levels")?.textContent ?? ""')
+    ok(backToList.length > 0, 'Level selection returns to the list')
+    ok(backToList.includes('finished'), 'the list marks levels that have been finished')
+    const preserved = JSON.parse(await cdp.eval('JSON.stringify(window.__smriti.summary())'))
+    ok(
+      preserved.completed === true && preserved.steps.length === 4,
+      'the finished result is preserved until another attempt is chosen'
+    )
   }
 
   // --- request audit --------------------------------------------------------

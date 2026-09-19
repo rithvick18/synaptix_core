@@ -1,5 +1,9 @@
 {
   "patient": { "name": "Mira" },
+  "demo": {
+    "fictional": true,
+    "notice": "Fictional demo data. Mira, Ananya, Bina and Rupa are invented, and so are the photographs, the voices and every memory named in this pack. Real patient content must always come from a caregiver-provided pack."
+  },
   "people": [
     { "id": "ananya", "name": "Ananya", "relationship": "Granddaughter",
       "photo": "/packs/mira/ananya.jpg", "voice": "/packs/mira/ananya.mp3" },
@@ -12,28 +16,109 @@
     "livingRoomWall": "/packs/mira/bihu.jpg",
     "bedsideFrame": "/packs/mira/ananya.jpg"
   },
-  "missions": [{
-    "id": "water",
-    "title": "Go to the kitchen and find the water jug",
-    "steps": [
-      { "type": "navigate", "targetRoom": "kitchen",
-        "instruction": "Please go to the kitchen.",
-        "hints": { "repeat": "Please go to the kitchen.",
-                   "highlight": "kitchenDoor",
-                   "guide": "The kitchen is through this door." } },
-      { "type": "find", "targetObject": "water-jug",
-        "instruction": "Can you find the water jug?",
-        "hints": { "repeat": "Can you find the water jug?",
-                   "highlight": "water-jug",
-                   "guide": "It is on the counter, here." } },
-      { "type": "recall",
-        "question": "Who visited you at Bihu in 2019?",
-        "choices": ["ananya", "bina", "rupa"],
-        "answer": "ananya",
-        "reducedChoices": ["ananya", "rupa"],
-        "hints": { "repeat": "Who visited you at Bihu in 2019?",
-                   "highlight": "reduce",
-                   "guide": "It was Ananya, your granddaughter." } }
-    ]
-  }]
+  "missions": [
+    {
+      "id": "water",
+      "title": "A glass of water",
+      "description": "Walk through to the kitchen, find the water jug, then answer one question about the family.",
+      "steps": [
+        { "type": "navigate", "targetRoom": "kitchen",
+          "instruction": "Please go to the kitchen.",
+          "hints": { "repeat": "Please go to the kitchen.",
+                     "highlight": "kitchenDoor",
+                     "guide": "The kitchen is through this door." } },
+        { "type": "find", "targetObject": "water-jug",
+          "instruction": "Can you find the water jug?",
+          "hints": { "repeat": "Can you find the water jug?",
+                     "highlight": "water-jug",
+                     "guide": "It is on the counter, here." } },
+        { "type": "recall",
+          "question": "Who visited you at Bihu in 2019?",
+          "choiceType": "person",
+          "choices": ["ananya", "bina", "rupa"],
+          "answer": "ananya",
+          "reducedChoices": ["ananya", "rupa"],
+          "hints": { "repeat": "Who visited you at Bihu in 2019?",
+                     "highlight": "reduce",
+                     "guide": "It was Ananya, your granddaughter." } }
+      ]
+    },
+    {
+      "id": "morning-walk",
+      "title": "Morning walk",
+      "description": "A walk around the house: the radio in the living room, the water jug in the kitchen, then back to the framed photograph.",
+      "steps": [
+        { "type": "navigate", "targetRoom": "livingRoom",
+          "instruction": "Let us start in the living room. Please walk through.",
+          "hints": { "repeat": "Let us start in the living room. Please walk through.",
+                     "highlight": "livingArch",
+                     "guide": "The living room is through this archway." } },
+        { "type": "find", "targetObject": "radio",
+          "instruction": "Can you find the radio?",
+          "hints": { "repeat": "Can you find the radio?",
+                     "highlight": "radio",
+                     "guide": "It is on the low unit by the window, here." } },
+        { "type": "navigate", "targetRoom": "kitchen",
+          "instruction": "Now please go through to the kitchen.",
+          "hints": { "repeat": "Now please go through to the kitchen.",
+                     "highlight": "kitchenArch",
+                     "guide": "The kitchen is through the opening beside you." } },
+        { "type": "find", "targetObject": "water-jug",
+          "instruction": "Can you find the water jug in here?",
+          "hints": { "repeat": "Can you find the water jug in here?",
+                     "highlight": "water-jug",
+                     "guide": "It is on the counter, here." } },
+        { "type": "navigate", "targetRoom": "livingRoom",
+          "instruction": "Now let us walk back to the living room.",
+          "hints": { "repeat": "Now let us walk back to the living room.",
+                     "highlight": "kitchenArch",
+                     "guide": "Back through the opening you came in by." } },
+        { "type": "find", "targetObject": "wall-photo",
+          "instruction": "Can you find the framed photograph on the wall?",
+          "hints": { "repeat": "Can you find the framed photograph on the wall?",
+                     "highlight": "wall-photo",
+                     "guide": "It is on the wall above the sofa, here." } }
+      ]
+    },
+    {
+      "id": "familiar-memories",
+      "title": "Familiar memories",
+      "description": "Find the framed photograph in the living room, then answer two questions about the day it was taken.",
+      "steps": [
+        { "type": "navigate", "targetRoom": "livingRoom",
+          "instruction": "Please go to the living room.",
+          "hints": { "repeat": "Please go to the living room.",
+                     "highlight": "livingArch",
+                     "guide": "The living room is through this archway." } },
+        { "type": "find", "targetObject": "wall-photo",
+          "instruction": "Can you find the framed photograph on the wall?",
+          "hints": { "repeat": "Can you find the framed photograph on the wall?",
+                     "highlight": "wall-photo",
+                     "guide": "It is on the wall above the sofa, here." } },
+        { "type": "recall",
+          "question": "Who is standing beside you in this photograph?",
+          "choiceType": "person",
+          "choices": ["ananya", "bina", "rupa"],
+          "answer": "bina",
+          "reducedChoices": ["bina", "rupa"],
+          "hints": { "repeat": "Who is standing beside you in this photograph?",
+                     "highlight": "reduce",
+                     "guide": "That is Bina, your daughter." } },
+        { "type": "recall",
+          "question": "What were you all celebrating that day?",
+          "choiceType": "text",
+          "options": [
+            { "id": "bihu", "label": "Bihu", "detail": "The spring festival, at home" },
+            { "id": "wedding", "label": "A wedding", "detail": "Rupa's niece, in Guwahati" },
+            { "id": "birthday", "label": "Ananya's birthday", "detail": "Her sixteenth" }
+          ],
+          "choices": ["bihu", "wedding", "birthday"],
+          "answer": "bihu",
+          "reducedChoices": ["bihu", "birthday"],
+          "hints": { "repeat": "What were you all celebrating that day?",
+                     "highlight": "reduce",
+                     "guide": "It was Bihu. You cooked for the whole house that morning." } }
+      ]
+    }
+  ]
 }

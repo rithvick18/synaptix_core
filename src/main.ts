@@ -9,7 +9,7 @@ import {
   patientIdFromLocation,
   type LoadedPack
 } from './MemoryPack'
-import { MissionRunner, stopSpeaking } from './Missions'
+import { MissionRunner, stopSpeaking, type Mission } from './Missions'
 import { Player } from './Player'
 import { Renderer } from './Renderer'
 import { State } from './State'
@@ -39,6 +39,12 @@ import { createProceduralHouse } from './proceduralHouse'
  * Checkpoint D records the events B's hooks emit, aggregates them into §4.4's summary,
  * exports the whole session as JSON, and turns the loading screen into staged item
  * counts.
+ *
+ * The three-level expansion turns the single mission into a chosen one. A level is a
+ * mission; an attempt is one play of a level; and `startLevel` is the only way to open
+ * an attempt, which is what makes "never combine events from different attempts" true
+ * by construction rather than by care — it tears the previous runner down, resets
+ * everything §5.6 lists, and opens a fresh log before the new runner exists.
  */
 
 const FRAME_WARMUP = 30
@@ -56,6 +62,18 @@ interface PerfResult {
   userAgent: string
 }
 
+/** What `debug.canFocus` reports: can a player stand somewhere and focus this object? */
+interface FocusProbe {
+  id: string
+  ok: boolean
+  /** The nearest standable spot it focused from. */
+  from?: { x: number; z: number }
+  room?: string | null
+  distance?: number
+  prompt?: string | null
+  reason?: string
+}
+
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))
@@ -64,10 +82,12 @@ function percentile(sorted: number[], p: number): number {
 
 const CONTROLS_PLAYING =
   '<span class="keycap">W A S D</span> walk · <span class="keycap">E</span> interact · ' +
-  '<span class="keycap">K</span> skip this step · <span class="keycap">R</span> start again · ' +
-  '<span class="keycap">J</span> export JSON · <span class="keycap">Esc</span> pause'
+  '<span class="keycap">K</span> skip this step · <span class="keycap">R</span> replay level · ' +
+  '<span class="keycap">L</span> levels · <span class="keycap">J</span> export JSON · ' +
+  '<span class="keycap">Esc</span> pause'
 const CONTROLS_DONE =
-  '<span class="keycap">R</span> start again · <span class="keycap">J</span> export JSON'
+  '<span class="keycap">R</span> replay level · <span class="keycap">L</span> levels · ' +
+  '<span class="keycap">J</span> export JSON'
 
 async function boot(): Promise<void> {
   const app = document.getElementById('app')!
@@ -177,27 +197,65 @@ async function boot(): Promise<void> {
     recorder.record(event)
     console.log('[smriti]', event.kind, event)
     ui.log(describe(event))
-    if (event.kind === 'mission_complete') showSummary()
+    if (event.kind === 'mission_complete') {
+      // The level list marks what has been played through at least once this session.
+      finished.add(event.id)
+      showSummary()
+    }
   }
 
-  const mission = pack.missions[0]
-  const missions = new MissionRunner({
-    pack, mission, world, player, state, telemetry, ui, media, voices
-  })
+  // --- Levels ---------------------------------------------------------------------
+  //
+  // A level is a mission. `startLevel` is the only way to open an attempt at one, and it
+  // is where every §5.6 reset lives, so there is no path that carries hint state, audio,
+  // a highlight, a position, a timer or an event from one attempt into the next.
+
+  const levels = pack.missions
+  let runner: MissionRunner | null = null
+  let levelIndex = -1
+  let attemptId = ''
+  const finished = new Set<string>()
+
+  /** Overlays that own the pointer. A background click must not act while one is up. */
+  let overlayMode: 'none' | 'levels' | 'summary' | 'paused' = 'none'
+
+  const levelLabel = (index: number): string =>
+    `Level ${index + 1} of ${levels.length} · ${levels[index].title}`
+
+  /**
+   * "6 steps · 3 to walk to · 3 to find" — engine chrome counted from the mission, not
+   * pack prose, and deliberately literal about what the player does. The player walks to
+   * a room and looks at an object; nothing here is carried, poured or switched on, so
+   * nothing here says so.
+   */
+  const shapeOf = (mission: Mission): string => {
+    const count = (type: string): number => mission.steps.filter((s) => s.type === type).length
+    const parts: string[] = []
+    if (count('navigate') > 0) parts.push(`${count('navigate')} to walk to`)
+    if (count('find') > 0) parts.push(`${count('find')} to find`)
+    if (count('recall') > 0) parts.push(`${count('recall')} question${count('recall') > 1 ? 's' : ''}`)
+    return `${mission.steps.length} steps · ${parts.join(' · ')}`
+  }
 
   // --- §4.4 summary and export ---------------------------------------------------
 
   const seconds = (value: number | null): string =>
     value === null ? '—' : `${(value / 1000).toFixed(1)}s`
 
+  const exportContext = () => ({
+    patientId: loaded.patientId,
+    patientName: pack.patient.name,
+    levelId: levels[levelIndex]?.id ?? null,
+    levelIndex: levelIndex >= 0 ? levelIndex : null,
+    levelTitle: levels[levelIndex]?.title ?? null,
+    attemptId,
+    attemptNumber: recorder.attempts,
+    restarts: recorder.restarts
+  })
+
   const exportSession = (): string => {
-    const doc = buildExport(recorder.log, {
-      patientId: loaded.patientId,
-      patientName: pack.patient.name,
-      missionTitle: mission.title,
-      restarts: recorder.restarts
-    })
-    const name = exportFilename(loaded.patientId)
+    const doc = buildExport(recorder.log, exportContext())
+    const name = exportFilename(loaded.patientId, doc.level.id)
     downloadJson(doc, name)
     console.log('[smriti] exported', name, doc)
     return name
@@ -225,11 +283,15 @@ async function boot(): Promise<void> {
           ? `mean of ${summary.recallRevealed}`
           : null
 
+    const mission = levels[levelIndex]
+    const next = levelIndex >= 0 && levelIndex + 1 < levels.length ? levelIndex + 1 : null
+
     ui.showSummary({
-      title: mission.title,
+      title: mission ? `${levelLabel(levelIndex)}` : 'Session so far',
       subtitle:
         `${pack.patient.name} · ` +
-        (summary.completed ? 'mission finished' : 'session so far') +
+        (summary.completed ? 'level finished' : 'attempt so far') +
+        ` · attempt ${recorder.attempts}` +
         (summary.pauses > 0 ? ` · paused ${summary.pauses}×` : ''),
       // §4.3: four values, never merged, and never added into a score.
       outcomes: [
@@ -245,7 +307,11 @@ async function boot(): Promise<void> {
         {
           label: 'rooms visited',
           value: String(summary.roomsVisited.length),
-          note: summary.roomsVisited.join(', ') || null
+          // Level 2 walks the living room → kitchen → living room. "2 rooms" is true and
+          // says nothing about that, so the number of entries is reported beside it.
+          note:
+            (summary.roomsVisited.join(', ') || null) &&
+            `${summary.roomsVisited.join(', ')} · ${summary.roomEntries} entries`
         },
         { label: 'answer latency', value: seconds(summary.answerLatencyMs), note: latencyNote },
         { label: 'time to reveal', value: seconds(summary.timeToRevealMs), note: revealNote }
@@ -257,11 +323,61 @@ async function boot(): Promise<void> {
       })),
       notDiagnostic: NOT_DIAGNOSTIC,
       keys:
-        'Press <span class="keycap">R</span> to start again · ' +
+        'Press <span class="keycap">R</span> to replay this level · ' +
+        '<span class="keycap">L</span> for the level list · ' +
         '<span class="keycap">J</span> downloads the JSON',
       onExport: exportSession,
-      onRestart: () => restart()
+      onReplay: () => startLevel(levelIndex),
+      onLevels: () => showLevels(),
+      onNext: next === null ? null : () => startLevel(next),
+      nextLabel: next === null ? null : `Next: ${levels[next].title}`
     })
+    overlayMode = 'summary'
+  }
+
+  /**
+   * The level-selection screen. Reached at start-up, from the summary, and with `L`.
+   *
+   * It does not clear the event log. A finished attempt stays exportable while the
+   * player looks at the list and decides — the log is only replaced when they actually
+   * choose to play something, which is `startLevel`'s job.
+   */
+  const showLevels = (): void => {
+    if (state.current === 'paused') state.resume()
+    runner?.reset()
+    stopSpeaking()
+    voices.stop()
+    interaction.clear()
+    dropDwell()
+    ui.hideAnswerCard()
+    ui.hideInstruction()
+    ui.setHint(null)
+    ui.setControls(null)
+    // Freezes movement and stops the clock while the list is up, and releases the
+    // pointer deliberately so §5.1 does not read it as a pause.
+    state.set('completed')
+    player.releaseLock()
+
+    ui.showLevelSelect({
+      title: `Smriti — ${pack.patient.name}`,
+      subtitle:
+        `Three levels from the memory pack "${loaded.patientId}". ` +
+        'Walk with W A S D, look with the mouse, press E to open doors and to look at things.',
+      levels: levels.map((mission, index) => ({
+        ordinal: `Level ${index + 1}`,
+        title: mission.title,
+        description: mission.description,
+        shape: shapeOf(mission),
+        finished: finished.has(mission.id),
+        onStart: () => startLevel(index)
+      })),
+      // §2: shown only because the pack says it of itself.
+      demoNotice: pack.demo?.notice ?? null,
+      keys:
+        '<span class="keycap">Esc</span> pauses · <span class="keycap">K</span> skips a step · ' +
+        '<span class="keycap">R</span> replays · <span class="keycap">L</span> returns here'
+    })
+    overlayMode = 'levels'
   }
 
   // §5.1: an unlock we did not ask for is a pause.
@@ -273,19 +389,17 @@ async function boot(): Promise<void> {
       stopSpeaking()
       voices.stop()
       ui.showMessage('Paused', ['The clock is stopped.'], 'Click anywhere to resume')
+      overlayMode = 'paused'
       return
     }
     if (previous === 'paused') telemetry.resume()
     // §5.1: resuming from a paused answer screen returns to `answering` with the card
     // visible and the pointer still unlocked, so the overlay has to clear for both.
-    if (next === 'exploring' || next === 'answering') ui.hideOverlay()
+    if (next === 'exploring' || next === 'answering') {
+      ui.hideOverlay()
+      overlayMode = 'none'
+    }
   })
-
-  ui.showMessage(`Smriti — ${pack.patient.name}`, [
-    mission.title,
-    'Walk with <b>W A S D</b>, look with the mouse, press <b>E</b> to open doors and interact.',
-    'The front door is ahead of you.'
-  ], 'Click to start · Esc pauses · K skips a step · R starts again')
 
   // Degradations are not failures, but they should be visible without a console open.
   for (const problem of warnings) ui.log(`pack · ${problem.where} · ${problem.message}`)
@@ -311,23 +425,47 @@ async function boot(): Promise<void> {
   }
 
   /**
-   * §5.6 — restart. `spawnAt` exists only for the debug helper below; the game itself
-   * always restarts to `world.spawn`.
+   * Opens one attempt at one level. Replay, "next level" and `R` all come through here,
+   * so the reset list below is the reset list for every one of them.
+   *
+   * §5.6 names what has to go: player position *and yaw*, room membership, highlights
+   * and focus, step index, timers, hint levels, selected answers, pointer-lock state,
+   * audio playback, and the telemetry event log. Switching levels needs all of it and
+   * the level's own state as well, which is why the previous runner is disposed rather
+   * than reused — its hint beacon is parented to the world and would otherwise stay.
+   *
+   * `spawnAt` exists only for the debug helper below; the game always spawns outside.
    */
-  const restart = (spawnAt?: THREE.Vector3): void => {
-    // Unpause first, so `resume` lands before `restart` rather than after the boundary
-    // that Checkpoint D clears the log on.
+  const startLevel = (index: number, spawnAt?: THREE.Vector3): void => {
+    const mission = levels[index]
+    if (!mission) {
+      console.warn(`[smriti] no level at index ${index}`)
+      return
+    }
+    // Unpause first, so `resume` lands before the boundary the log is cleared on.
     if (state.current === 'paused') state.resume()
 
-    telemetry.restart()      // Checkpoint D clears the event log on this hook.
-    missions.reset()         // step index, hint levels, card, selected answers, speech
-    stopSpeaking()           // spoken instructions
-    voices.stop()            // pack voice playback
-    interaction.clear()      // focused object and its highlight
+    if (runner) {
+      telemetry.restart()   // §5.6's hook; the recorder clears the log on it
+      runner.dispose()      // step state, card, speech, pack audio, and the beacon
+      runner = null
+    }
+    stopSpeaking()          // spoken instructions
+    voices.stop()           // pack voice playback
+    interaction.clear()     // focused object and its highlight
     dropDwell()
+    player.clearInput()     // a key held down through a level switch must not carry over
     ui.clearLog()
     ui.hideAnswerCard()
+    ui.setHint(null)
     ui.hideOverlay()
+
+    levelIndex = index
+    // Unique within the page-load, and readable: who, which level, which attempt.
+    attemptId = `${loaded.patientId}-${mission.id}-a${recorder.attempts + 1}`
+    // The log is emptied here, before a single event of the new attempt exists. Nothing
+    // from the previous level or the previous try can reach this one's summary.
+    recorder.beginAttempt(attemptId)
 
     player.teleport(spawnAt ?? world.spawn.position, world.spawn.yaw)  // position AND yaw
 
@@ -336,22 +474,27 @@ async function boot(): Promise<void> {
     // re-entry produce no change event, and a navigate step then waits forever.
     currentRoom = world.roomOf(player.groundPoint(feet))
 
-    state.resetTimers()      // every timer
-    state.set('exploring')   // pointer-lock state follows from the state
+    state.resetTimers()     // every timer
+    state.set('exploring')  // pointer-lock state follows from the state
     player.requestLock()
+    overlayMode = 'none'
+    started = true
 
-    // A restart that lands the player inside a room starts the session already there,
-    // and no boundary will be crossed to say so. Without this the export of exactly the
-    // session §5.5 exists for — a restart taken in the kitchen — reports that the player
-    // visited no rooms at all, which is false. The game's own restart spawns outside, so
-    // `currentRoom` is normally null here and nothing is emitted.
+    // An attempt that begins inside a room begins there, and no boundary will be
+    // crossed to say so. Without this the export of exactly the session §5.5 exists for
+    // — a restart taken in the kitchen — reports that the player visited no rooms at
+    // all, which is false. The game's own spawn is outside, so `currentRoom` is normally
+    // null here and nothing is emitted.
     if (currentRoom) telemetry.roomEnter(currentRoom)
 
-    started = true
-    missions.start()         // mission_start, then §5.5's containment test on step 1
+    runner = new MissionRunner({
+      pack, mission, world, player, state, telemetry, ui, media, voices,
+      levelLabel: levelLabel(index)
+    })
+    runner.start()          // mission_start, then §5.5's containment test on step 1
   }
 
-  const resume = (): void => {
+  const onClick = (): void => {
     // Browsers start an AudioContext suspended until a gesture. This is that gesture.
     voices.unlock()
     if (state.current === 'paused') {
@@ -359,20 +502,12 @@ async function boot(): Promise<void> {
       if (state.pointerLockWanted) player.requestLock()
       return
     }
-    if (!started) {
-      started = true
-      ui.hideOverlay()
-      player.requestLock()
-      state.resetTimers()
-      missions.start()
-      return
-    }
-    if (!player.isLocked && state.pointerLockWanted) {
-      ui.hideOverlay()
-      player.requestLock()
-    }
+    // The level list and the summary are read, not clicked through: only their own
+    // buttons act, and those stop the event before it reaches here.
+    if (overlayMode !== 'none') return
+    if (!player.isLocked && state.pointerLockWanted) player.requestLock()
   }
-  document.addEventListener('click', resume)
+  document.addEventListener('click', onClick)
 
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') {
@@ -384,28 +519,38 @@ async function boot(): Promise<void> {
     }
     if (e.code === 'KeyR') {
       e.preventDefault()
-      restart()
+      // Replays the selected level. Before anything has been selected it does nothing
+      // rather than guessing which level was meant.
+      if (levelIndex >= 0) startLevel(levelIndex)
+      return
+    }
+    if (e.code === 'KeyL') {
+      e.preventDefault()
+      showLevels()
       return
     }
     if (e.code === 'KeyJ') {
       e.preventDefault()
-      // Export is available at any moment, not only at the end: a session abandoned
-      // half way is still a session, and §4.4's summary is defined on a partial log.
+      // Export is available at any moment, not only at the end: an attempt abandoned
+      // half way is still an attempt, and §4.4's summary is defined on a partial log.
       exportSession()
       return
     }
     if (e.code === 'KeyK') {
       e.preventDefault()
       // §5.4: skip is always available — during a recall card as much as while walking.
-      if (state.current === 'exploring' || state.current === 'answering') missions.skip()
+      if (state.current === 'exploring' || state.current === 'answering') runner?.skip()
       return
     }
     if (e.code === 'KeyE' && state.current === 'exploring' && interaction.focus) {
       const id = interaction.focus.meta.id
       interaction.activate()          // doors open and close; the jug has no action
-      missions.notifyInteract(id)     // emits object_interact and may finish a find step
+      runner?.notifyInteract(id)      // emits object_interact and may finish a find step
     }
   })
+
+  // The first thing the player sees once the pack is in: which levels there are.
+  showLevels()
 
   // Performance measurement (§7). renderer.info gives draw calls and triangles only;
   // frame time is sampled here over FRAME_SAMPLES frames once the world is up.
@@ -431,7 +576,7 @@ async function boot(): Promise<void> {
     const room = world.roomOf(player.groundPoint(feet))
     if (room !== currentRoom) {
       currentRoom = room
-      missions.notifyRoom(room)
+      runner?.notifyRoom(room)
     }
 
     // Focus only exists while exploring; any other state drops it and its highlight.
@@ -449,8 +594,8 @@ async function boot(): Promise<void> {
     }
 
     ui.setPrompt(focus ? interaction.promptText() : null)
-    missions.update()
-    ui.setControls(missions.active ? CONTROLS_PLAYING : started ? CONTROLS_DONE : null)
+    runner?.update()
+    ui.setControls(runner?.active ? CONTROLS_PLAYING : started ? CONTROLS_DONE : null)
 
     renderer.render()
 
@@ -487,15 +632,91 @@ async function boot(): Promise<void> {
         : `draws ${info.render.calls}  tris ${info.render.triangles}\nmeasuring frame time… ${samples.length}/${FRAME_SAMPLES}`
     )
 
-    const step = missions.current
+    const step = runner?.current ?? null
     ui.setHud(
       `pack <b>${loaded.patientId}</b> · ${pack.patient.name} · ` +
         `state <b>${state.current}</b> · room <b>${currentRoom ?? '—'}</b> · ` +
         `t <b>${(state.elapsed() / 1000).toFixed(1)}s</b>` +
-        (step ? ` · step <b>${missions.stepIndex + 1}/${missions.steps.length} ${step.type}</b>` +
-          ` · hint <b>${missions.level}</b>` : '') +
+        (levelIndex >= 0 ? ` · level <b>${levelIndex + 1}/${levels.length}</b>` : '') +
+        (step && runner
+          ? ` · step <b>${runner.stepIndex + 1}/${runner.steps.length} ${step.type}</b>` +
+            ` · hint <b>${runner.level}</b>`
+          : '') +
         (focus ? ` · focus <b>${focus.meta.id}</b>` : '')
     )
+  }
+
+  /**
+   * Walks the floor around `id`, aims at it from each standable spot in turn, and runs
+   * the real interaction pick. The first spot from which the object focuses wins, and
+   * candidates are tried nearest-first, so `distance` is about as close as a player has
+   * to get. Nothing here is simulated: it is `Interaction.update` with its own 2.5 m
+   * limit and its own occlusion test, on the world that is actually on screen.
+   */
+  const probeFocus = (id: string): FocusProbe => {
+    const target = world.interactables[id]
+    if (!target) return { id, ok: false, reason: 'not an interactable in this world' }
+
+    const bounds = new THREE.Box3().setFromObject(target)
+    if (bounds.isEmpty()) return { id, ok: false, reason: 'the object has no geometry to aim at' }
+    const centre = bounds.getCenter(new THREE.Vector3())
+
+    // Put the player back afterwards — a probe must not move the game.
+    const savedPosition = player.position.clone()
+    const savedYaw = player.yaw
+    const savedPitch = player.pitch
+    const savedFocus = interaction.focus
+
+    const candidates: THREE.Vector3[] = []
+    const step = 0.2
+    for (let ring = 1; ring <= 16; ring++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dz = -ring; dz <= ring; dz++) {
+          if (Math.abs(dx) !== ring && Math.abs(dz) !== ring) continue
+          const x = centre.x + dx * step
+          const z = centre.z + dz * step
+          if (player.collidesAt(x, z)) continue
+          // Standing on top of a prop puts the camera inside its geometry, where the
+          // ray starts behind the front face and hits nothing. A player could not get
+          // that close to something on a counter anyway.
+          if (Math.hypot(x - centre.x, z - centre.z) < 0.45) continue
+          candidates.push(new THREE.Vector3(x, 1.6, z))
+        }
+      }
+    }
+    candidates.sort(
+      (a, b) => a.distanceToSquared(centre) - b.distanceToSquared(centre)
+    )
+
+    let result: FocusProbe = { id, ok: false, reason: 'no standable spot focuses it' }
+    for (const spot of candidates) {
+      player.teleport(spot, 0)
+      player.aimAt(centre)
+      // The raycast reads `camera.matrixWorld`, which three only recomputes during a
+      // render. Without this the probe aims from wherever the camera stood last frame
+      // and reports every target unreachable.
+      renderer.camera.updateMatrixWorld(true)
+      interaction.clear()
+      const focus = interaction.update(renderer.camera)
+      if (focus?.meta.id !== id) continue
+      result = {
+        id,
+        ok: true,
+        from: { x: +spot.x.toFixed(2), z: +spot.z.toFixed(2) },
+        room: world.roomOf(player.groundPoint(new THREE.Vector3())),
+        distance: +spot.distanceTo(centre).toFixed(2),
+        prompt: interaction.promptText()
+      }
+      break
+    }
+
+    interaction.clear()
+    player.teleport(savedPosition, savedYaw)
+    player.pitch = savedPitch
+    player.update(0)
+    renderer.camera.updateMatrixWorld(true)
+    if (savedFocus) interaction.update(renderer.camera)
+    return result
   }
 
   /**
@@ -503,42 +724,66 @@ async function boot(): Promise<void> {
    * nothing in the game reads it.
    */
   ;(window as unknown as { __smriti: unknown }).__smriti = {
-    world, player, interaction, state, renderer, ui, missions, telemetry,
+    world, player, interaction, state, renderer, ui, telemetry,
     pack, media, voices, warnings, patientId: loaded.patientId,
     recorder,
+    get runner(): MissionRunner | null {
+      return runner
+    },
+    get level(): number {
+      return levelIndex
+    },
+    levels: levels.map((m) => m.id),
     summary: () => summarise(recorder.log),
-    exportJson: () =>
-      buildExport(recorder.log, {
-        patientId: loaded.patientId,
-        patientName: pack.patient.name,
-        missionTitle: mission.title,
-        restarts: recorder.restarts
-      }),
+    exportJson: () => buildExport(recorder.log, exportContext()),
     debug: {
       download: exportSession,
       showSummary,
-      restart,
-      /**
-       * §5.5 / §6: "restarting inside the kitchen still completes step 1." The game
-       * always restarts the player to `world.spawn`, which is outside on the path, so
-       * this override is how the containment branch itself is exercised: it restarts
-       * with the player standing in the named room, and step 1 must finish instantly.
-       */
+      showLevels,
+      startLevel,
+      /** Replays whichever level is selected — what `R` and the Replay button do. */
+      restart: () => startLevel(levelIndex),
       /** §6 Checkpoint C's "audible voice" — plays one person's voice on demand. */
       playVoice(personId: string): string {
         return voices.play(personId)
           ? `playing ${personId} from the audioSource anchor`
           : `no voice loaded for ${personId}`
       },
-      restartInRoom(roomId: string): string {
+      /**
+       * §5.5 / §6: "restarting inside the kitchen still completes step 1." The game
+       * always spawns the player outside on the path, so this override is how the
+       * containment branch itself is exercised: it starts the level with the player
+       * standing in the named room, and a first navigate step must finish instantly.
+       */
+      restartInRoom(roomId: string, index = levelIndex): string {
         const trigger = world.triggers.find((t) => t.room === roomId)
         if (!trigger) return `no such room: ${roomId}`
         const spot = standableIn(trigger.box, player)
         if (!spot) return `no standable spot found in ${roomId}`
-        restart(spot)
-        return `restarted at ${spot.x.toFixed(2)}, ${spot.z.toFixed(2)} in ` +
+        startLevel(index, spot)
+        return `started level ${index + 1} at ${spot.x.toFixed(2)}, ${spot.z.toFixed(2)} in ` +
           `${world.roomOf(player.groundPoint(new THREE.Vector3()))} — step is now ` +
-          `${missions.stepIndex + 1}/${missions.steps.length}`
+          `${(runner?.stepIndex ?? -1) + 1}/${runner?.steps.length ?? 0}`
+      },
+      /**
+       * Can a player actually stand somewhere and focus this object?
+       *
+       * "Ensure every target is reachable" is not something to eyeball. This walks the
+       * standable floor near the target, aims the camera at it from each candidate spot,
+       * and runs the real `Interaction.update` — the same 2.5 m limit and the same
+       * ray-vs-Box3 occlusion test the game uses (§5.2). It reports the nearest spot
+       * that works, or says that none does. The player is put back where they were.
+       */
+      canFocus(id: string): FocusProbe {
+        return probeFocus(id)
+      },
+      /** Every interactable the three levels name, probed in one call. */
+      probeTargets(): FocusProbe[] {
+        const ids = new Set<string>()
+        for (const mission of levels) {
+          for (const step of mission.steps) if (step.type === 'find') ids.add(step.targetObject)
+        }
+        return [...ids].map((id) => probeFocus(id))
       }
     }
   }

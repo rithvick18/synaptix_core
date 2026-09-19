@@ -145,6 +145,24 @@ export class Recorder {
   private events: Event[] = []
   /** How many times §5.6's restart has cleared the log this page-load. */
   restarts = 0
+  /** How many attempts have been opened this page-load, across all levels. */
+  attempts = 0
+  /** Identifies the attempt the current log belongs to. Empty before the first one. */
+  attemptId = ''
+
+  /**
+   * Opens a new attempt: a replay of the same level, or a switch to a different one.
+   *
+   * Clearing here is what makes "never combine events from different attempts" a
+   * property of the recorder rather than a rule the caller has to remember. There is no
+   * path that appends to a log belonging to an earlier attempt, because the only way to
+   * start one is through this method, and it empties the log before it returns.
+   */
+  beginAttempt(attemptId: string): void {
+    this.events = []
+    this.attemptId = attemptId
+    this.attempts++
+  }
 
   record(event: Event): void {
     if (event.kind === 'restart') {
@@ -166,6 +184,22 @@ export class Recorder {
   clear(): void {
     this.events = []
   }
+}
+
+/**
+ * Every distinct mission id that appears in a log, in first-seen order.
+ *
+ * A correct log has exactly one. More than one means two attempts were folded together
+ * somewhere, which would make the summary a blend of two different levels — so the
+ * export carries this list and the checks assert its length after a level switch.
+ */
+export function missionIdsIn(events: readonly Event[]): string[] {
+  const ids: string[] = []
+  for (const event of events) {
+    if (event.kind !== 'mission_start' && event.kind !== 'mission_complete') continue
+    if (!ids.includes(event.id)) ids.push(event.id)
+  }
+  return ids
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +246,14 @@ export interface Summary {
   recallRevealed: number
   steps: StepSummary[]
   pauses: number
+  /**
+   * Total `room_enter` events, where `roomsVisited` is the distinct set.
+   *
+   * Level 2 walks the living room → kitchen → living room, so "rooms visited: 2" is
+   * true but says nothing about the walking that was the whole level. Both numbers are
+   * reported; neither is a substitute for the other.
+   */
+  roomEntries: number
 }
 
 interface OpenStep extends StepSummary {
@@ -246,6 +288,7 @@ export function summarise(events: readonly Event[]): Summary {
   let pauses = 0
 
   const rooms: string[] = []
+  let roomEntries = 0
   const steps: StepSummary[] = []
   const outcomes: Record<Outcome, number> = { ...NO_OUTCOMES }
   let open: OpenStep | null = null
@@ -329,6 +372,7 @@ export function summarise(events: readonly Event[]): Summary {
         break
 
       case 'room_enter':
+        roomEntries++
         if (!rooms.includes(event.room)) rooms.push(event.room)
         break
 
@@ -357,7 +401,8 @@ export function summarise(events: readonly Event[]): Summary {
     timeToRevealMs: mean(revealed.map((s) => s.timeToRevealMs!)),
     recallRevealed: revealed.length,
     steps,
-    pauses
+    pauses,
+    roomEntries
   }
 }
 
@@ -385,9 +430,17 @@ export function dwellByObject(events: readonly Event[]): DwellTotal[] {
 // ---------------------------------------------------------------------------
 
 export interface ExportContext {
+  /** Which pack the content came from — `?patient=` (§6 Checkpoint C). */
   patientId: string
   patientName: string
-  missionTitle: string | null
+  /** Which level: its mission id, its position in the pack, and its title. */
+  levelId: string | null
+  levelIndex: number | null
+  levelTitle: string | null
+  /** Identifies this attempt uniquely within the page-load. */
+  attemptId: string
+  /** 1 for the first attempt of the page-load, counting across all levels. */
+  attemptNumber: number
   /** How many times this page-load restarted before the session being exported. */
   restarts: number
 }
@@ -403,8 +456,22 @@ export interface ExportDocument {
   notDiagnostic: string
   comparability: string
   patient: { id: string; name: string }
+  /** Which of the pack's levels this attempt played. */
+  level: { id: string | null; index: number | null; title: string | null }
+  /** Kept as an alias of `level` for anything reading the pre-levels export shape. */
   mission: { id: string | null; title: string | null }
-  session: { restarts: number; events: number }
+  session: {
+    attemptId: string
+    attemptNumber: number
+    restarts: number
+    events: number
+    /**
+     * Every mission id in the log. One entry means this file describes one attempt at
+     * one level, which is the only correct value — it is written out rather than
+     * assumed so a reader can check rather than trust.
+     */
+    missionIdsInLog: string[]
+  }
   summary: Summary
   dwellByObject: DwellTotal[]
   events: Event[]
@@ -412,6 +479,13 @@ export interface ExportDocument {
 
 export function buildExport(events: readonly Event[], context: ExportContext): ExportDocument {
   const summary = summarise(events)
+  const inLog = missionIdsIn(events)
+  if (inLog.length > 1) {
+    // Loud, because a blended log makes every number below meaningless. The file is
+    // still written: withholding a caregiver's data to punish a bug helps nobody, and
+    // `missionIdsInLog` puts the problem on the face of the document.
+    console.error('[smriti] export spans more than one mission id:', inLog)
+  }
   return {
     format: 'smriti-telemetry',
     version: 1,
@@ -419,18 +493,34 @@ export function buildExport(events: readonly Event[], context: ExportContext): E
     notDiagnostic: NOT_DIAGNOSTIC,
     comparability: 'Compare only against the same patient’s past sessions.',
     patient: { id: context.patientId, name: context.patientName },
-    mission: { id: summary.missionId, title: context.missionTitle },
-    session: { restarts: context.restarts, events: events.length },
+    level: {
+      // The log's own mission id wins over the caller's: it is what was actually played.
+      id: summary.missionId ?? context.levelId,
+      index: context.levelIndex,
+      title: context.levelTitle
+    },
+    mission: { id: summary.missionId ?? context.levelId, title: context.levelTitle },
+    session: {
+      attemptId: context.attemptId,
+      attemptNumber: context.attemptNumber,
+      restarts: context.restarts,
+      events: events.length,
+      missionIdsInLog: inLog
+    },
     summary,
     dwellByObject: dwellByObject(events),
     events: [...events]
   }
 }
 
-/** Filesystem-safe, sortable, and says whose session it is at a glance. */
-export function exportFilename(patientId: string, at = new Date()): string {
+/**
+ * Filesystem-safe, sortable, and says whose session it is and which level, at a glance.
+ * With three levels and replays, a folder of downloads is otherwise a row of timestamps.
+ */
+export function exportFilename(patientId: string, levelId: string | null, at = new Date()): string {
   const stamp = at.toISOString().replace(/[:.]/g, '-').replace(/Z$/, '')
-  return `smriti-${patientId}-${stamp}.json`
+  const level = (levelId ?? 'session').replace(/[^a-z0-9-]/gi, '-')
+  return `smriti-${patientId}-${level}-${stamp}.json`
 }
 
 /** Hands the browser a file. Returns the JSON text, so callers can log or copy it. */

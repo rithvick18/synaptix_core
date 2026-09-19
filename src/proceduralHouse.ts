@@ -1046,7 +1046,13 @@ export async function createProceduralHouse(
     hintTargets[spec.id] = door.pivot
   }
 
-  for (const spec of ARCHES) root.add(buildTrim(spec, mats))
+  // An arch has no slab to open, so it is never an interactable — but it is the thing
+  // to point at when the step is "go to the living room", which has no door of its own.
+  for (const spec of ARCHES) {
+    const trim = buildTrim(spec, mats)
+    root.add(trim)
+    hintTargets[spec.id] = trim
+  }
 
   // ---- Interactables and anchors ----
   const jug = buildWaterJug(mats)
@@ -1063,6 +1069,17 @@ export async function createProceduralHouse(
   livingRoomWall.rotation.y = LIVING_ROOM_WALL_YAW
   livingRoomWall.name = 'anchor:livingRoomWall'
   root.add(livingRoomWall)
+  // The same object is both a personalisation anchor and something the player walks up
+  // to and looks at. The verb is "Look at" and nothing else: pressing E on the picture
+  // does not take it down, turn it over or open anything, and the prompt must not
+  // suggest that it does.
+  tagInteractable(livingRoomWall, {
+    id: 'wall-photo',
+    label: 'framed photograph',
+    verb: () => 'Look at'
+  })
+  interactables['wall-photo'] = livingRoomWall
+  hintTargets['wall-photo'] = livingRoomWall
 
   const bedsideFrame = buildFrameAnchor(0.2, 0.26, mats)
   bedsideFrame.position.set(BEDSIDE_FRAME_ANCHOR[0], BEDSIDE_FRAME_ANCHOR[1] + 0.17, BEDSIDE_FRAME_ANCHOR[2])
@@ -1070,18 +1087,67 @@ export async function createProceduralHouse(
   bedsideFrame.name = 'anchor:bedsideFrame'
   root.add(bedsideFrame)
 
+  /**
+   * The radio: the `audioSource` anchor the pack's voices play from, and — since the
+   * levels ask the player to find it — something that has to read as a radio at a
+   * glance from across the room.
+   *
+   * It was a plain dark box with its one distinguishing feature, the speaker grille,
+   * on the face turned towards the wall. Against the black television beside it, at
+   * the far end of a dim living room, it was very close to invisible. It is now a
+   * warm-cased set whose speaker, dial and carry handle all face the way the player
+   * comes in, which is what "recognisable, not beautiful" (§1.1) has to mean when a
+   * step says "can you find the radio?".
+   *
+   * The player approaches from lower z — the unit stands against the south wall — so
+   * the front of the set is its -Z face.
+   */
   const audioSource = new THREE.Group()
   audioSource.name = 'anchor:audioSource'
-  const radio = simpleBox(mats, 'dark', 0, 0.07, 0, 0.3, 0.14, 0.13)
+  const FRONT = -0.075
+  const radio = simpleBox(mats, 'wood', 0, 0.09, 0, 0.34, 0.18, 0.15)
   audioSource.add(radio)
-  const speaker = new THREE.Mesh(
-    new THREE.CircleGeometry(0.045, 14),
-    new THREE.MeshStandardMaterial({ color: 0x55585d, roughness: 0.9 })
+  // Speaker grille, left of centre and facing the room.
+  const grille = new THREE.Mesh(
+    new THREE.CircleGeometry(0.058, 20),
+    new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.95 })
   )
-  speaker.position.set(-0.07, 0.07, 0.066)
-  audioSource.add(speaker)
+  grille.position.set(-0.08, 0.09, FRONT - 0.001)
+  grille.rotation.y = Math.PI
+  audioSource.add(grille)
+  // Tuning dial and its pointer, right of centre.
+  const dial = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.028, 0.028, 0.012, 16),
+    new THREE.MeshStandardMaterial({ color: 0xd8d2c6, roughness: 0.55, metalness: 0.2 })
+  )
+  dial.rotation.x = Math.PI / 2
+  dial.position.set(0.085, 0.09, FRONT - 0.004)
+  audioSource.add(dial)
+  const scale = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.115, 0.03),
+    new THREE.MeshStandardMaterial({ color: 0xf0e6cf, roughness: 0.8 })
+  )
+  scale.position.set(0.0, 0.155, FRONT - 0.001)
+  scale.rotation.y = Math.PI
+  audioSource.add(scale)
+  // Carry handle across the top — the silhouette that says "radio" from a distance.
+  const handle = new THREE.Mesh(
+    new THREE.TorusGeometry(0.06, 0.008, 8, 20, Math.PI),
+    new THREE.MeshStandardMaterial({ color: 0x3c3a38, roughness: 0.7 })
+  )
+  // Left in the XY plane: the half-arc then reads as a handle from the front, which is
+  // where the player sees it. Turned into ZY it is edge-on and looks like an aerial.
+  handle.position.set(0, 0.18, 0)
+  audioSource.add(handle)
+  for (const part of [radio, grille, dial, scale, handle]) part.castShadow = true
   audioSource.position.set(...AUDIO_SOURCE_ANCHOR)
   root.add(audioSource)
+  // Likewise the radio: it is the `audioSource` anchor the pack's voices play from, and
+  // it is also a findable object. "Look at", not "Switch on" — E does not operate it,
+  // and §9 of the level brief is that an instruction never claims otherwise.
+  tagInteractable(audioSource, { id: 'radio', label: 'radio', verb: () => 'Look at' })
+  interactables['radio'] = audioSource
+  hintTargets['radio'] = audioSource
 
   // ---- World ----
   const triggers = ROOMS.map((r) => ({
