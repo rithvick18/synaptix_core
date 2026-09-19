@@ -33,6 +33,7 @@ import {
   type WindowSpec
 } from './layout'
 import { tagInteractable, type WorldSource } from './World'
+import type { StageProgress } from './ui'
 
 /**
  * SPEC.md §1.1 — the default world, built from primitives.
@@ -105,11 +106,27 @@ function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Te
   })
 }
 
-async function loadSet(loader: THREE.TextureLoader, name: string): Promise<MapTriplet> {
+/** Each map settles individually, so the loading screen counts files and not sets. */
+async function loadSet(
+  loader: THREE.TextureLoader,
+  name: string,
+  settled: (ok: boolean) => void
+): Promise<MapTriplet> {
+  const one = (suffix: string): Promise<THREE.Texture> =>
+    loadTexture(loader, `${POLY_HAVEN}/${name}/${name}_${suffix}_1k.jpg`).then(
+      (t) => {
+        settled(true)
+        return t
+      },
+      (error) => {
+        settled(false)
+        throw error
+      }
+    )
   const [map, roughnessMap, normalMap] = await Promise.all([
-    loadTexture(loader, `${POLY_HAVEN}/${name}/${name}_diff_1k.jpg`),
-    loadTexture(loader, `${POLY_HAVEN}/${name}/${name}_rough_1k.jpg`),
-    loadTexture(loader, `${POLY_HAVEN}/${name}/${name}_nor_gl_1k.jpg`)
+    one('diff'),
+    one('rough'),
+    one('nor_gl')
   ])
   map.colorSpace = THREE.SRGBColorSpace
   for (const t of [map, roughnessMap, normalMap]) {
@@ -822,7 +839,9 @@ export function auditReachability(
 // Build
 // ---------------------------------------------------------------------------
 
-export async function createProceduralHouse(): Promise<{ world: WorldSource; report: HouseBuildReport }> {
+export async function createProceduralHouse(
+  onProgress?: StageProgress
+): Promise<{ world: WorldSource; report: HouseBuildReport }> {
   const root = new THREE.Group()
   root.name = 'proceduralHouse'
 
@@ -833,11 +852,26 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
   const texturesFailed: string[] = []
   const sets = new Map<Surface, MapTriplet | null>()
 
+  const surfaces = Object.keys(TEXTURE_SET) as Surface[]
+  // Three maps per set — diffuse, roughness, normal. The denominator is known before
+  // the first request, which is the whole reason this can be an honest count.
+  const textureTotal = surfaces.length * 3
+  let textureDone = 0
+  let textureFailed = 0
+  onProgress?.('textures', 0, 0, textureTotal)
+
   await Promise.all(
-    (Object.keys(TEXTURE_SET) as Surface[]).map(async (surface) => {
+    surfaces.map(async (surface) => {
       const { name } = TEXTURE_SET[surface]!
       try {
-        sets.set(surface, await loadSet(loader, name))
+        sets.set(
+          surface,
+          await loadSet(loader, name, (fileOk) => {
+            if (fileOk) textureDone++
+            else textureFailed++
+            onProgress?.('textures', textureDone, textureFailed, textureTotal)
+          })
+        )
         texturesLoaded.push(name)
       } catch {
         // Degradation contract: flat colour, keep going, never block the load.
@@ -846,6 +880,13 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
       }
     })
   )
+
+  // A set that failed early leaves its siblings' requests unsettled; report the stage as
+  // finished rather than leaving the count short of its own denominator.
+  onProgress?.('textures', textureDone, textureTotal - textureDone, textureTotal)
+  // Geometry from here on: no downloads, so no counts. The stage exists because the
+  // audits below take visible time on a slow machine and silence looks like a hang.
+  onProgress?.('house', 0, 0, 0)
 
   const mats = new Materials(sets)
   const blockers: THREE.Box3[] = []
@@ -1091,5 +1132,7 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
     )
   }
 
+  // Total stays 0 so the row shows a tick and no count: there was nothing to fetch.
+  onProgress?.('house', 1, 0, 0)
   return { world, report: { texturesLoaded, texturesFailed, doorways, reachability } }
 }

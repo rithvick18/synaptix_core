@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js'
+import type { StageProgress } from './ui'
 
 /**
  * SPEC.md §3 — WebGLRenderer, HDRLoader + PMREM, ACES.
@@ -83,7 +84,10 @@ export class Renderer {
    * §1.1: HDRI download or decode failure must leave the scene playable with
    * `scene.environment = null` and the hemisphere + directional pair carrying the room.
    */
-  async setupEnvironment(): Promise<EnvironmentReport> {
+  async setupEnvironment(onProgress?: StageProgress): Promise<EnvironmentReport> {
+    // One item: the HDRI. Counted rather than turned into a percentage, because a
+    // percentage of one file is either 0 or 100 and pretends to be neither.
+    onProgress?.('hdri', 0, 0, 1)
     try {
       const texture = await new Promise<THREE.DataTexture>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('hdri timeout')), HDRI_TIMEOUT_MS)
@@ -109,11 +113,15 @@ export class Renderer {
       // The HDRI carries ambient bounce, so the stand-in lights step back.
       this.hemi.intensity = 0.7
       this.sun.intensity = 2.2
+      onProgress?.('hdri', 1, 0, 1)
       return { hdri: 'loaded' }
     } catch {
       this.scene.environment = null
       this.hemi.intensity = 1.5
       this.sun.intensity = 2.6
+      // §1.1: a failed HDRI is a fallback, not an error. It is still *reported* — a
+      // silent fallback is how a demo machine ends up looking wrong for no visible reason.
+      onProgress?.('hdri', 0, 1, 1)
       return { hdri: 'failed' }
     }
   }

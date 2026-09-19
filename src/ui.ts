@@ -24,6 +24,44 @@ export interface ChoiceCard {
   hasVoice?: boolean
 }
 
+/**
+ * How a loader reports its own progress to the loading screen. Imported as a *type* by
+ * Renderer.ts, proceduralHouse.ts and MemoryPack.ts, so nothing outside this file gains
+ * a runtime dependency on the UI — they describe what they are doing, ui.ts decides how
+ * it looks.
+ */
+export type StageProgress = (stage: string, done: number, failed: number, total: number) => void
+
+/**
+ * One stage of the loading screen. §6 Checkpoint D asks for stage plus asset count —
+ * **item counts, never a synthetic byte percentage**. A progress bar drawn from bytes
+ * nobody measured is a lie told to a caregiver waiting on a slow connection, and the
+ * three downloads here have wildly different sizes anyway. A stage with no downloads
+ * (building geometry) carries no counts at all rather than a made-up denominator.
+ */
+export interface LoadStage {
+  id: string
+  label: string
+  state: 'waiting' | 'active' | 'done'
+  counts: { done: number; failed: number; total: number } | null
+  /** Shown instead of counts — e.g. which optional asset fell back. */
+  note?: string | null
+}
+
+/** What the summary card renders. Telemetry.ts computes it; ui.ts only lays it out. */
+export interface SummaryView {
+  title: string
+  subtitle: string
+  /** All four §4.3 outcomes, in a fixed order, never summed. */
+  outcomes: { label: string; count: number }[]
+  measures: { label: string; value: string; note?: string | null }[]
+  steps: { label: string; outcome: string; durationMs: number | null }[]
+  notDiagnostic: string
+  keys?: string
+  onExport: () => void
+  onRestart: () => void
+}
+
 /** One row of the pack-rejection list. Mirrors MemoryPack's `PackProblem`. */
 export interface RenderedProblem {
   severity: 'reject' | 'warn'
@@ -159,6 +197,56 @@ canvas { display: block; }
   padding: 8px 12px; border-radius: 9px; background: rgba(255,255,255,.05);
   border: 1px solid rgba(255,255,255,.08); font-size: 13px; }
 #overlay .outcomes b { font-weight: 600; color: #ffd98a; }
+/* --- Loading stages: item counts, never a byte percentage --- */
+#overlay .stages { margin: 18px auto 0; display: flex; flex-direction: column; gap: 6px;
+  text-align: left; max-width: 340px; }
+#overlay .stages div { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 14px; padding: 7px 12px; border-radius: 9px; background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.07); font-size: 13px; color: #8d8880; }
+#overlay .stages div.active { color: #f2efe9; border-color: rgba(255,217,138,.35);
+  background: rgba(255,217,138,.09); }
+#overlay .stages div.done { color: #b5b0a6; }
+#overlay .stages .count { font-variant-numeric: tabular-nums; font-size: 12.5px;
+  white-space: nowrap; color: #8d8880; }
+#overlay .stages div.active .count { color: #ffd98a; }
+#overlay .stages .mark { display: inline-block; width: 1.1em; }
+
+/* --- Summary card (§4.4). No score, no grade, no colour-coded judgement. --- */
+#overlay .card.summary { max-width: 640px; width: min(640px, 100%); }
+#overlay .notdx { margin: 14px auto 0; padding: 8px 14px; border-radius: 9px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
+  color: #b5b0a6; font-size: 12.5px; letter-spacing: .02em; }
+#overlay .outcomeGrid { margin: 18px 0 0; display: grid; gap: 8px;
+  grid-template-columns: repeat(4, 1fr); }
+#overlay .outcomeGrid div { padding: 12px 8px; border-radius: 11px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); }
+#overlay .outcomeGrid b { display: block; font-size: 24px; font-weight: 600; color: #f2efe9;
+  font-variant-numeric: tabular-nums; }
+#overlay .outcomeGrid span { display: block; margin-top: 2px; font-size: 11.5px;
+  letter-spacing: .06em; text-transform: uppercase; color: #8d8880; }
+#overlay .measures { margin: 10px 0 0; display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+#overlay .measures div { padding: 10px 12px; border-radius: 10px; text-align: left;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); }
+#overlay .measures b { display: block; font-size: 17px; font-weight: 600;
+  font-variant-numeric: tabular-nums; }
+#overlay .measures span { display: block; margin-top: 1px; font-size: 11.5px; color: #8d8880; }
+#overlay .measures em { font-style: normal; color: #6f6b64; }
+#overlay .stepTable { margin: 12px 0 0; display: flex; flex-direction: column; gap: 5px; }
+#overlay .stepTable div { display: grid; grid-template-columns: 1fr auto auto;
+  gap: 12px; align-items: baseline; padding: 8px 12px; border-radius: 9px; text-align: left;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); font-size: 12.5px; }
+#overlay .stepTable .o { color: #ffd98a; font-weight: 600; }
+#overlay .stepTable .n { color: #8d8880; font-variant-numeric: tabular-nums; }
+#overlay .actions { margin-top: 18px; display: flex; justify-content: center; gap: 10px;
+  flex-wrap: wrap; }
+#overlay .actions button { padding: 9px 18px; border-radius: 10px; font: inherit;
+  cursor: pointer; border: 1px solid rgba(255,255,255,.18); background: transparent;
+  color: #b5b0a6; }
+#overlay .actions button:hover { color: #f2efe9; border-color: rgba(255,255,255,.35); }
+#overlay .actions button.primary { background: #ffd98a; border-color: #ffd98a;
+  color: #14161a; font-weight: 600; }
+
 #bar { width: 220px; height: 3px; margin: 18px auto 0; border-radius: 2px;
   background: rgba(255,255,255,.14); overflow: hidden; }
 #bar i { display: block; height: 100%; width: 35%; background: #ffd98a;
@@ -233,13 +321,13 @@ export class UI {
   // --- Overlays ---------------------------------------------------------------
 
   showLoading(message: string): void {
-    this.overlayCard.classList.remove('wide')
+    this.overlayCard.classList.remove('wide', 'summary')
     this.overlayCard.innerHTML = `<h1>Smriti</h1><p>${message}</p><div id="bar"><i></i></div>`
     this.overlayEl.hidden = false
   }
 
   showMessage(title: string, lines: string[], keys?: string): void {
-    this.overlayCard.classList.remove('wide')
+    this.overlayCard.classList.remove('wide', 'summary')
     this.overlayCard.innerHTML =
       `<h1>${title}</h1>${lines.map((l) => `<p>${l}</p>`).join('')}` +
       (keys ? `<div class="keys">${keys}</div>` : '')
@@ -247,18 +335,96 @@ export class UI {
   }
 
   /**
-   * The end-of-mission screen. Deliberately not §4.4's summary — that needs recording and
-   * aggregation and belongs to Checkpoint D. This only echoes the outcome the runner
-   * already knows for each step, so the four §4.3 values can be seen to be distinct.
+   * The loading screen, as stages with **item counts**. Re-rendered on every tick, so it
+   * is cheap on purpose: one innerHTML of a handful of rows.
+   *
+   * A failed optional download is shown as a count, not hidden — §1.1 says the scene
+   * must still play without it, and a caregiver debugging a slow site deserves to see
+   * "11/12, 1 fell back" rather than a bar that silently reached the end.
    */
-  showCompletion(title: string, rows: { label: string; outcome: string }[], keys?: string): void {
-    this.overlayCard.classList.remove('wide')
+  showLoadingStages(title: string, stages: LoadStage[]): void {
+    this.overlayCard.classList.remove('wide', 'summary')
     this.overlayCard.innerHTML =
-      `<h1>${title}</h1><p>Thank you. You can walk around the house again whenever you like.</p>` +
-      `<div class="outcomes">${rows
-        .map((r) => `<div><span>${r.label}</span><b>${r.outcome}</b></div>`)
+      `<h1>Smriti</h1><p>${title}</p>` +
+      `<div class="stages">${stages
+        .map((stage) => {
+          const mark = stage.state === 'done' ? '✓' : stage.state === 'active' ? '·' : ' '
+          const counts = stage.counts
+          const count = stage.note
+            ? stage.note
+            : counts
+              ? `${counts.done + counts.failed}/${counts.total}` +
+                (counts.failed > 0 ? ` · ${counts.failed} fell back` : '')
+              : ''
+          return (
+            `<div class="${stage.state}"><span><span class="mark">${mark}</span>${stage.label}</span>` +
+            `<span class="count">${count}</span></div>`
+          )
+        })
+        .join('')}</div>`
+    this.overlayEl.hidden = false
+  }
+
+  /**
+   * §4.4's summary. The rules it has to obey are all negative ones, so they are worth
+   * stating where the markup is:
+   *
+   * - **All four outcomes, separately, always.** §4.3 — "there is no single score", so
+   *   nothing here adds them up, ranks them, or colours one of them green.
+   * - **`answerLatency` shows an em dash on a revealed or skipped step**, with the reason
+   *   written out. A blank would read as zero; a number would let a fast reveal pass for
+   *   a fast correct answer, which is the exact confusion §4.4 forbids.
+   * - **`timeToReveal` is its own row**, never folded into latency.
+   * - **The not-diagnostic label is on screen**, not only in the exported file.
+   */
+  showSummary(view: SummaryView): void {
+    this.overlayCard.classList.remove('wide')
+    this.overlayCard.classList.add('summary')
+
+    const ms = (value: number | null): string =>
+      value === null ? '—' : `${(value / 1000).toFixed(1)}s`
+
+    this.overlayCard.innerHTML =
+      `<h1>${view.title}</h1>` +
+      `<p>${view.subtitle}</p>` +
+      `<div class="outcomeGrid">${view.outcomes
+        .map((o) => `<div><b>${o.count}</b><span>${o.label}</span></div>`)
         .join('')}</div>` +
-      (keys ? `<div class="keys">${keys}</div>` : '')
+      `<div class="measures">${view.measures
+        .map(
+          (m) =>
+            `<div><b>${m.value}</b><span>${m.label}` +
+            (m.note ? ` <em>· ${m.note}</em>` : '') +
+            `</span></div>`
+        )
+        .join('')}</div>` +
+      `<div class="stepTable">${view.steps
+        .map(
+          (s) =>
+            `<div><span>${s.label}</span><span class="n">${ms(s.durationMs)}</span>` +
+            `<span class="o">${s.outcome}</span></div>`
+        )
+        .join('')}</div>` +
+      `<div class="notdx">${view.notDiagnostic}</div>` +
+      `<div class="actions">` +
+      `<button class="primary" data-act="export">Download JSON</button>` +
+      `<button data-act="restart">Start again</button>` +
+      `</div>` +
+      (view.keys ? `<div class="keys">${view.keys}</div>` : '')
+
+    this.overlayCard
+      .querySelector<HTMLButtonElement>('button[data-act="export"]')!
+      .addEventListener('click', (e) => {
+        e.stopPropagation()
+        view.onExport()
+      })
+    this.overlayCard
+      .querySelector<HTMLButtonElement>('button[data-act="restart"]')!
+      .addEventListener('click', (e) => {
+        e.stopPropagation()
+        view.onRestart()
+      })
+
     this.overlayEl.hidden = false
   }
 
@@ -268,6 +434,7 @@ export class UI {
    * one list, not one reload per fault.
    */
   showRejection(title: string, subtitle: string, problems: RenderedProblem[], keys?: string): void {
+    this.overlayCard.classList.remove('summary')
     this.overlayCard.classList.add('wide')
     this.overlayCard.innerHTML =
       `<h1>${title}</h1><p>${subtitle}</p>` +
@@ -284,7 +451,7 @@ export class UI {
 
   hideOverlay(): void {
     this.overlayEl.hidden = true
-    this.overlayCard.classList.remove('wide')
+    this.overlayCard.classList.remove('wide', 'summary')
   }
 
   get overlayVisible(): boolean {

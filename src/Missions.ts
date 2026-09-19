@@ -418,18 +418,12 @@ export class MissionRunner {
     this.deps.ui.hideAnswerCard()
     this.deps.ui.hideInstruction()
     this.deps.ui.setHint(null)
+    // Checkpoint B ended here with a placeholder completion screen. §4.4's real summary
+    // is computed from the recorded event log, so it is rendered by whoever is listening
+    // on the telemetry seam — the runner's job is to say that the mission finished.
     this.deps.telemetry.missionComplete(this.deps.mission.id)
     this.deps.state.set('completed')
     this.deps.player.releaseLock()
-
-    this.deps.ui.showCompletion(
-      this.deps.mission.title,
-      this.steps.map((step, i) => ({
-        label: instructionOf(step),
-        outcome: this.outcomes[i] ?? '—'
-      })),
-      'Press <span class="keycap">R</span> to start again'
-    )
   }
 
   // --- Hint ladder (§5.4) ------------------------------------------------------------

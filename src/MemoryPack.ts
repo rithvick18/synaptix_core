@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { MemoryPack, Mission, Person, RecallStep, Step } from './Missions'
 import { ANCHOR_PLATE } from './proceduralHouse'
+import type { StageProgress } from './ui'
 import type { WorldSource } from './World'
 
 /**
@@ -518,6 +519,8 @@ function placeholderTexture(): THREE.Texture {
 export interface MediaOptions {
   /** `?break=` tokens — see `breakagesFromLocation`. */
   breakages?: Set<string>
+  /** Reports item counts to the loading screen. Never bytes — see ui.ts `LoadStage`. */
+  onProgress?: StageProgress
 }
 
 /**
@@ -532,6 +535,17 @@ export async function loadMedia(
   const media = new PackMedia()
   const problems: PackProblem[] = []
 
+  // The denominator is every file this pack names — anchors, photos and voices. It is
+  // known exactly, before a single request goes out, because validation has already run.
+  let done = 0
+  let failed = 0
+  let total = 0
+  const settled = (okFlag: boolean): void => {
+    if (okFlag) done++
+    else failed++
+    options.onProgress?.('media', done, failed, total)
+  }
+
   /** Rewrites a path to one that cannot resolve, so the real failure path runs. */
   const path = (token: string, raw: string): string =>
     broken.has(token) ? resolvePackPath(`${raw}.__missing__`) : resolvePackPath(raw)
@@ -542,6 +556,7 @@ export async function loadMedia(
   for (const [anchorId, raw] of Object.entries(pack.anchors)) {
     jobs.push(
       loadTexture(path(`anchor:${anchorId}`, raw)).then((texture) => {
+        settled(texture !== null)
         if (texture) {
           media.anchorTextures.set(anchorId, texture)
           return
@@ -562,6 +577,7 @@ export async function loadMedia(
     if (person.photo) {
       jobs.push(
         loadImage(path(`photo:${person.id}`, person.photo)).then((img) => {
+          settled(img !== null)
           if (img) {
             media.setPhoto(person.id, img.src)
             return
@@ -578,6 +594,7 @@ export async function loadMedia(
     if (person.voice) {
       jobs.push(
         loadAudio(path(`voice:${person.id}`, person.voice)).then((buffer) => {
+          settled(buffer !== null)
           if (buffer) {
             media.setVoice(person.id, buffer)
             return
@@ -594,7 +611,10 @@ export async function loadMedia(
     }
   }
 
+  total = jobs.length
+  options.onProgress?.('media', 0, 0, total)
   await Promise.all(jobs)
+  options.onProgress?.('media', done, failed, total)
 
   // --- card style, per question, after every photo has settled ---------------
   for (const mission of pack.missions) {
@@ -780,6 +800,8 @@ export async function loadPack(
 
   const url = options.url ?? resolvePackPath(`packs/${patientId}/pack.json`)
 
+  options.onProgress?.('pack', 0, 0, 1)
+
   let raw: unknown
   try {
     const response = await fetch(url, { cache: 'no-cache' })
@@ -794,6 +816,7 @@ export async function loadPack(
       ])
     }
     raw = await response.json()
+    options.onProgress?.('pack', 1, 0, 1)
   } catch (error) {
     if (error instanceof PackRejected) throw error
     throw new PackRejected(patientId, [

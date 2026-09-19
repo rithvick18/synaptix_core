@@ -13,8 +13,18 @@ import { MissionRunner, stopSpeaking } from './Missions'
 import { Player } from './Player'
 import { Renderer } from './Renderer'
 import { State } from './State'
-import { DWELL_THRESHOLD_MS, Telemetry, type Event } from './Telemetry'
-import { UI } from './ui'
+import {
+  DWELL_THRESHOLD_MS,
+  NOT_DIAGNOSTIC,
+  Recorder,
+  Telemetry,
+  buildExport,
+  downloadJson,
+  exportFilename,
+  summarise,
+  type Event
+} from './Telemetry'
+import { UI, type LoadStage } from './ui'
 import { assertWorldContract } from './World'
 import { createProceduralHouse } from './proceduralHouse'
 
@@ -26,7 +36,9 @@ import { createProceduralHouse } from './proceduralHouse'
  * and the telemetry hook call sites.
  * Checkpoint C replaces B's bundled fixture with a real caregiver pack, chosen by
  * `?patient=`, validated per §4.2 and injected into the world as photographs and voice.
- * Recording, aggregation and export are Checkpoint D.
+ * Checkpoint D records the events B's hooks emit, aggregates them into §4.4's summary,
+ * exports the whole session as JSON, and turns the loading screen into staged item
+ * counts.
  */
 
 const FRAME_WARMUP = 30
@@ -53,8 +65,9 @@ function percentile(sorted: number[], p: number): number {
 const CONTROLS_PLAYING =
   '<span class="keycap">W A S D</span> walk · <span class="keycap">E</span> interact · ' +
   '<span class="keycap">K</span> skip this step · <span class="keycap">R</span> start again · ' +
-  '<span class="keycap">Esc</span> pause'
-const CONTROLS_DONE = '<span class="keycap">R</span> start again'
+  '<span class="keycap">J</span> export JSON · <span class="keycap">Esc</span> pause'
+const CONTROLS_DONE =
+  '<span class="keycap">R</span> start again · <span class="keycap">J</span> export JSON'
 
 async function boot(): Promise<void> {
   const app = document.getElementById('app')!
@@ -64,15 +77,46 @@ async function boot(): Promise<void> {
   // a path segment, so MemoryPack validates its shape before interpolating it.
   const patientId = patientIdFromLocation(location.search)
   const breakages = breakagesFromLocation(location.search)
-  ui.showLoading('Preparing the house…')
+
+  /**
+   * §6 Checkpoint D's loading screen: stage plus asset count. Every denominator below
+   * is a number of *files this build actually asks for*, known before the first request
+   * — 12 texture maps, 1 HDRI, 1 pack manifest, and however many photographs and voice
+   * clips the chosen pack names. Nothing here is derived from bytes, because nothing
+   * measures bytes: `Content-Length` is absent on the CDN responses and a percentage
+   * invented from a guess is worse than a count.
+   */
+  const stages: LoadStage[] = [
+    { id: 'textures', label: 'Surface textures', state: 'waiting', counts: null },
+    { id: 'hdri', label: 'Environment lighting', state: 'waiting', counts: null },
+    { id: 'house', label: 'Building the house', state: 'waiting', counts: null, note: null },
+    { id: 'pack', label: 'Memory pack', state: 'waiting', counts: null },
+    { id: 'media', label: 'Photographs and voices', state: 'waiting', counts: null }
+  ]
+
+  const progress = (id: string, done: number, failed: number, total: number): void => {
+    const stage = stages.find((s) => s.id === id)
+    if (!stage) return
+    // A stage with no files to fetch (geometry) reports totals of 0 and shows no count.
+    stage.counts = total > 0 ? { done, failed, total } : null
+    stage.state = total > 0 && done + failed >= total ? 'done' : total === 0 && done > 0 ? 'done' : 'active'
+    for (const earlier of stages) {
+      if (earlier === stage) break
+      if (earlier.state === 'waiting') earlier.state = 'done'
+    }
+    const active = stages.find((s) => s.state === 'active')
+    ui.showLoadingStages(active ? `${active.label}…` : 'Almost ready…', stages)
+  }
+
+  ui.showLoadingStages('Starting…', stages)
 
   const renderer = new Renderer(app)
   const state = new State()
 
   // Both downloads are optional by contract (§1.1); neither can fail the boot.
   const [{ world, report }, envReport] = await Promise.all([
-    createProceduralHouse(),
-    renderer.setupEnvironment()
+    createProceduralHouse(progress),
+    renderer.setupEnvironment(progress)
   ])
   assertWorldContract(world)
   renderer.scene.add(world.root)
@@ -94,7 +138,7 @@ async function boot(): Promise<void> {
   // obvious the engine is fine and the *pack* is not.
   let loaded: LoadedPack
   try {
-    loaded = await loadPack(patientId, world, { breakages })
+    loaded = await loadPack(patientId, world, { breakages, onProgress: progress })
   } catch (error) {
     if (!(error instanceof PackRejected)) throw error
     console.error('[smriti] pack rejected', error.problems)
@@ -121,18 +165,104 @@ async function boot(): Promise<void> {
   }
   document.title = `Smriti — ${pack.patient.name}`
 
-  // §4.4: every `t` rides State.elapsed(), the clock that stops in `paused`.
+  // §4.4: every `t` rides State.elapsed(), the clock that stops in `paused`. Because
+  // every stamp is already on that clock, every duration derived from them is already
+  // free of paused time — §4.4's "subtract paused time" needs no subtraction step.
   const telemetry = new Telemetry(() => state.elapsed())
+  const recorder = new Recorder()
+
   telemetry.onEvent = (event: Event) => {
-    // Checkpoint B observes; it does not record. D replaces this listener with the log.
+    // Checkpoint D plugs into the seam B left. The `restart` event is what clears the
+    // log (§5.6); `Recorder` handles that, so nothing here has to remember to.
+    recorder.record(event)
     console.log('[smriti]', event.kind, event)
     ui.log(describe(event))
+    if (event.kind === 'mission_complete') showSummary()
   }
 
   const mission = pack.missions[0]
   const missions = new MissionRunner({
     pack, mission, world, player, state, telemetry, ui, media, voices
   })
+
+  // --- §4.4 summary and export ---------------------------------------------------
+
+  const seconds = (value: number | null): string =>
+    value === null ? '—' : `${(value / 1000).toFixed(1)}s`
+
+  const exportSession = (): string => {
+    const doc = buildExport(recorder.log, {
+      patientId: loaded.patientId,
+      patientName: pack.patient.name,
+      missionTitle: mission.title,
+      restarts: recorder.restarts
+    })
+    const name = exportFilename(loaded.patientId)
+    downloadJson(doc, name)
+    console.log('[smriti] exported', name, doc)
+    return name
+  }
+
+  /**
+   * §4.4's summary, rendered from the recorded log rather than from anything the mission
+   * runner remembers. The three rules it has to keep are all about *not* saying things:
+   * the four outcomes stay separate, `answerLatency` is an em dash rather than a number
+   * on a revealed or skipped step, and the not-diagnostic label is on the screen.
+   */
+  const showSummary = (): void => {
+    const summary = summarise(recorder.log)
+
+    const latencyNote =
+      summary.recallAnswered === 0
+        ? 'null — the step ended revealed or skipped'
+        : summary.recallAnswered > 1
+          ? `mean of ${summary.recallAnswered}`
+          : null
+    const revealNote =
+      summary.recallRevealed === 0
+        ? 'no answer was revealed'
+        : summary.recallRevealed > 1
+          ? `mean of ${summary.recallRevealed}`
+          : null
+
+    ui.showSummary({
+      title: mission.title,
+      subtitle:
+        `${pack.patient.name} · ` +
+        (summary.completed ? 'mission finished' : 'session so far') +
+        (summary.pauses > 0 ? ` · paused ${summary.pauses}×` : ''),
+      // §4.3: four values, never merged, and never added into a score.
+      outcomes: [
+        { label: 'independent', count: summary.outcomes.independent },
+        { label: 'cued', count: summary.outcomes.cued },
+        { label: 'revealed', count: summary.outcomes.revealed },
+        { label: 'skipped', count: summary.outcomes.skipped }
+      ],
+      measures: [
+        { label: 'completion time', value: seconds(summary.completionTimeMs) },
+        { label: 'hints used', value: String(summary.hintsUsed) },
+        { label: 'highest hint level', value: String(summary.maxHintLevel) },
+        {
+          label: 'rooms visited',
+          value: String(summary.roomsVisited.length),
+          note: summary.roomsVisited.join(', ') || null
+        },
+        { label: 'answer latency', value: seconds(summary.answerLatencyMs), note: latencyNote },
+        { label: 'time to reveal', value: seconds(summary.timeToRevealMs), note: revealNote }
+      ],
+      steps: summary.steps.map((step) => ({
+        label: `${step.step + 1} · ${step.type}`,
+        outcome: step.outcome ?? '—',
+        durationMs: step.durationMs
+      })),
+      notDiagnostic: NOT_DIAGNOSTIC,
+      keys:
+        'Press <span class="keycap">R</span> to start again · ' +
+        '<span class="keycap">J</span> downloads the JSON',
+      onExport: exportSession,
+      onRestart: () => restart()
+    })
+  }
 
   // §5.1: an unlock we did not ask for is a pause.
   player.onUnexpectedUnlock = () => state.pause()
@@ -210,6 +340,13 @@ async function boot(): Promise<void> {
     state.set('exploring')   // pointer-lock state follows from the state
     player.requestLock()
 
+    // A restart that lands the player inside a room starts the session already there,
+    // and no boundary will be crossed to say so. Without this the export of exactly the
+    // session §5.5 exists for — a restart taken in the kitchen — reports that the player
+    // visited no rooms at all, which is false. The game's own restart spawns outside, so
+    // `currentRoom` is normally null here and nothing is emitted.
+    if (currentRoom) telemetry.roomEnter(currentRoom)
+
     started = true
     missions.start()         // mission_start, then §5.5's containment test on step 1
   }
@@ -248,6 +385,13 @@ async function boot(): Promise<void> {
     if (e.code === 'KeyR') {
       e.preventDefault()
       restart()
+      return
+    }
+    if (e.code === 'KeyJ') {
+      e.preventDefault()
+      // Export is available at any moment, not only at the end: a session abandoned
+      // half way is still a session, and §4.4's summary is defined on a partial log.
+      exportSession()
       return
     }
     if (e.code === 'KeyK') {
@@ -361,7 +505,18 @@ async function boot(): Promise<void> {
   ;(window as unknown as { __smriti: unknown }).__smriti = {
     world, player, interaction, state, renderer, ui, missions, telemetry,
     pack, media, voices, warnings, patientId: loaded.patientId,
+    recorder,
+    summary: () => summarise(recorder.log),
+    exportJson: () =>
+      buildExport(recorder.log, {
+        patientId: loaded.patientId,
+        patientName: pack.patient.name,
+        missionTitle: mission.title,
+        restarts: recorder.restarts
+      }),
     debug: {
+      download: exportSession,
+      showSummary,
       restart,
       /**
        * §5.5 / §6: "restarting inside the kitchen still completes step 1." The game
