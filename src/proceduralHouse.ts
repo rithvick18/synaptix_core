@@ -12,7 +12,11 @@ import {
   LAMPS,
   LIVING_ROOM_WALL_ANCHOR,
   LIVING_ROOM_WALL_YAW,
+  OPENINGS,
   PLANTS,
+  PLAYER_BODY_MAX_Y,
+  PLAYER_BODY_MIN_Y,
+  PLAYER_RADIUS,
   PROPS,
   ROOMS,
   SPAWN_LOOK_AT,
@@ -23,6 +27,7 @@ import {
   WINDOWS,
   type ChairSpec,
   type DoorSpec,
+  type OpeningSpec,
   type SolidSpec,
   type Surface,
   type WindowSpec
@@ -84,6 +89,7 @@ const TEXTURE_SET: Partial<Record<Surface, { name: string; tile: number }>> = {
 export interface HouseBuildReport {
   texturesLoaded: string[]
   texturesFailed: string[]
+  doorways: DoorwayReport[]
 }
 
 type MapTriplet = { map: THREE.Texture; roughnessMap: THREE.Texture; normalMap: THREE.Texture }
@@ -202,7 +208,9 @@ function simpleBox(
 // Doors
 // ---------------------------------------------------------------------------
 
-const OPEN_ANGLE = THREE.MathUtils.degToRad(96)
+// Just past square. Opening further swings the slab's AABB back across the doorway,
+// which is exactly the clearance the player needs.
+const OPEN_ANGLE = THREE.MathUtils.degToRad(91)
 const SWING_SECONDS = 0.55
 
 /**
@@ -215,10 +223,13 @@ class Door {
   readonly pivot = new THREE.Group()
   open = false
 
+  /** Where the slab sits when open — public so `auditDoorways` can measure against it. */
+  readonly openBox = new THREE.Box3()
+
   private amount = 0
   private closedBox = new THREE.Box3()
-  private openBox = new THREE.Box3()
   private baseYaw: number
+
 
   constructor(readonly spec: DoorSpec, mats: Materials) {
     const width = spec.to - spec.from
@@ -276,7 +287,7 @@ class Door {
     }
     this.pivot.rotation.y = this.baseYaw + spec.swing * OPEN_ANGLE
     this.pivot.updateMatrixWorld(true)
-    this.openBox.setFromObject(slab).expandByScalar(0.03)
+    this.openBox.setFromObject(slab).expandByScalar(0.01)
     this.pivot.rotation.y = this.baseYaw
     this.pivot.updateMatrixWorld(true)
 
@@ -631,6 +642,67 @@ function buildFrameAnchor(width: number, height: number, mats: Materials): THREE
 }
 
 // ---------------------------------------------------------------------------
+// Doorway audit
+// ---------------------------------------------------------------------------
+
+export interface DoorwayReport {
+  id: string
+  /** Usable corridor width in metres, 0 if the opening is impassable. */
+  width: number
+  ok: boolean
+}
+
+/**
+ * Walks a player-sized box through each opening and reports how wide the usable gap
+ * actually is.
+ *
+ * This exists because furniture placed a few centimetres inside a doorway makes it
+ * silently impassable — the wall is clear, the door swings, and the player still cannot
+ * get through. Geometry that looks right in a screenshot can be unwalkable, so the
+ * clearance is measured rather than eyeballed.
+ */
+function passableWidth(blockers: THREE.Box3[], o: OpeningSpec, radius: number): number {
+  const body = new THREE.Box3()
+  const centre = (o.from + o.to) / 2
+  const clearAt = (lateral: number): boolean => {
+    const c = centre + lateral
+    // Step right through the wall and out the far side.
+    for (let d = -1.0; d <= 1.0001; d += 0.1) {
+      const x = o.axis === 'x' ? c : o.at + d
+      const z = o.axis === 'x' ? o.at + d : c
+      body.min.set(x - radius, PLAYER_BODY_MIN_Y, z - radius)
+      body.max.set(x + radius, PLAYER_BODY_MAX_Y, z + radius)
+      for (const b of blockers) if (body.intersectsBox(b)) return false
+    }
+    return true
+  }
+  if (!clearAt(0)) return 0
+  let slack = 0
+  for (let l = 0.05; l <= 0.8; l += 0.05) {
+    if (!clearAt(l) || !clearAt(-l)) break
+    slack = l
+  }
+  return (radius + slack) * 2
+}
+
+/**
+ * Every opening must admit the player with its door open. Anything under the player's
+ * own width is impassable; anything under ~0.7 m is passable but unpleasant.
+ */
+export function auditDoorways(
+  blockers: THREE.Box3[],
+  doors: Map<string, Door>
+): DoorwayReport[] {
+  return OPENINGS.map((o) => {
+    const door = doors.get(o.id)
+    const consider = blockers.filter((b) => b !== door?.blocker)
+    if (door) consider.push(door.openBox)
+    const width = passableWidth(consider, o, PLAYER_RADIUS)
+    return { id: o.id, width: +width.toFixed(2), ok: width >= PLAYER_RADIUS * 2 + 0.2 }
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
 
@@ -881,5 +953,14 @@ export async function createProceduralHouse(): Promise<{ world: WorldSource; rep
     }
   }
 
-  return { world, report: { texturesLoaded, texturesFailed } }
+  const doorways = auditDoorways(blockers, doors)
+  const impassable = doorways.filter((d) => !d.ok)
+  if (impassable.length) {
+    console.error(
+      '[smriti] impassable or tight doorways:',
+      impassable.map((d) => `${d.id} ${d.width}m`).join(', ')
+    )
+  }
+
+  return { world, report: { texturesLoaded, texturesFailed, doorways } }
 }

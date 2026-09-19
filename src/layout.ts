@@ -24,6 +24,16 @@
  */
 
 export const CEILING_HEIGHT = 2.7
+
+/**
+ * Half-width of the player's collision box, and the figure every doorway is sized
+ * against. The player is an axis-aligned box rather than a capsule, so its corners catch
+ * on jambs; 0.24 m keeps a 1.0 m doorway comfortably passable while still reading as a
+ * person's width.
+ */
+export const PLAYER_RADIUS = 0.24
+export const PLAYER_BODY_MIN_Y = 0.15
+export const PLAYER_BODY_MAX_Y = 1.75
 export const EXT_WALL_T = 0.24
 export const INT_WALL_T = 0.12
 export const DOOR_HEIGHT = 2.05
@@ -97,24 +107,67 @@ export interface WallRun {
   openings?: Opening[]
 }
 
+/**
+ * Every opening in the house, declared once. `WALL_RUNS` and `DOORS` are both derived
+ * from this, so a doorway and the slab that fills it cannot drift apart.
+ *
+ * Widths are 1.0 m inside and 1.1 m at the front door. That is wider than a real
+ * doorway on purpose: the player is an axis-aligned box, not a capsule, and an open
+ * door's own bounding box eats into the opening at the hinge. At 0.9 m the remaining
+ * gap was narrower than the player.
+ */
+export interface OpeningSpec {
+  id: string
+  label: string
+  axis: 'x' | 'z'
+  at: number
+  from: number
+  to: number
+  height: number
+  thickness: number
+  hinge: 'from' | 'to'
+  swing: 1 | -1
+  /** Archways get trim but no slab. */
+  arch?: boolean
+}
+
+export const OPENINGS: OpeningSpec[] = [
+  { id: 'frontDoor', label: 'front door', axis: 'x', at: EXT_S, from: -0.55, to: 0.55,
+    height: 2.1, thickness: EXT_WALL_T, hinge: 'from', swing: 1 },
+  { id: 'kitchenDoor', label: 'kitchen door', axis: 'z', at: HALL_E, from: -3.4, to: -2.4,
+    height: DOOR_HEIGHT, thickness: INT_WALL_T, hinge: 'from', swing: 1 },
+  { id: 'bedroomDoor', label: 'bedroom door', axis: 'z', at: HALL_W, from: -3.4, to: -2.4,
+    height: DOOR_HEIGHT, thickness: INT_WALL_T, hinge: 'from', swing: -1 },
+  { id: 'bathroomDoor', label: 'bathroom door', axis: 'z', at: HALL_W, from: 2.4, to: 3.4,
+    height: DOOR_HEIGHT, thickness: INT_WALL_T, hinge: 'to', swing: 1 },
+  { id: 'livingArch', label: 'living room arch', axis: 'z', at: HALL_E, from: 1.2, to: 3.2,
+    height: ARCH_HEIGHT, thickness: INT_WALL_T, hinge: 'from', swing: 1, arch: true },
+  { id: 'kitchenArch', label: 'kitchen arch', axis: 'x', at: EAST_DIV, from: 4.3, to: 5.7,
+    height: ARCH_HEIGHT, thickness: INT_WALL_T, hinge: 'from', swing: 1, arch: true }
+]
+
+const openingsOn = (axis: 'x' | 'z', at: number): Opening[] =>
+  OPENINGS.filter((o) => o.axis === axis && o.at === at)
+    .map((o) => ({ from: o.from, to: o.to, height: o.height }))
+
 export const WALL_RUNS: WallRun[] = [
   // Exterior shell. The only opening is the front door.
   { id: 'ext-north', axis: 'x', at: EXT_N, from: EXT_W - EXT_WALL_T / 2, to: EXT_E + EXT_WALL_T / 2, thickness: EXT_WALL_T, surface: 'wall' },
   { id: 'ext-south', axis: 'x', at: EXT_S, from: EXT_W - EXT_WALL_T / 2, to: EXT_E + EXT_WALL_T / 2, thickness: EXT_WALL_T, surface: 'wall',
-    openings: [{ from: -0.5, to: 0.5, height: 2.1 }] },
+    openings: openingsOn('x', EXT_S) },
   { id: 'ext-west', axis: 'z', at: EXT_W, from: EXT_N - EXT_WALL_T / 2, to: EXT_S + EXT_WALL_T / 2, thickness: EXT_WALL_T, surface: 'wall' },
   { id: 'ext-east', axis: 'z', at: EXT_E, from: EXT_N - EXT_WALL_T / 2, to: EXT_S + EXT_WALL_T / 2, thickness: EXT_WALL_T, surface: 'wall' },
 
   // Hallway walls. Doors to kitchen, bedroom and bathroom; an open arch to the living room.
   { id: 'hall-east', axis: 'z', at: HALL_E, from: Z0, to: Z1, thickness: INT_WALL_T, surface: 'wall',
-    openings: [{ from: -3.3, to: -2.4, height: DOOR_HEIGHT }, { from: 1.2, to: 3.2, height: ARCH_HEIGHT }] },
+    openings: openingsOn('z', HALL_E) },
   { id: 'hall-west', axis: 'z', at: HALL_W, from: Z0, to: Z1, thickness: INT_WALL_T, surface: 'wall',
-    openings: [{ from: -3.3, to: -2.4, height: DOOR_HEIGHT }, { from: 2.4, to: 3.3, height: DOOR_HEIGHT }] },
+    openings: openingsOn('z', HALL_W) },
 
   // Kitchen / living room divider, with a wide arch so the two §1 rooms connect directly
   // as well as through the hallway.
   { id: 'east-div', axis: 'x', at: EAST_DIV, from: HALL_E, to: X1, thickness: INT_WALL_T, surface: 'wall',
-    openings: [{ from: 4.3, to: 5.7, height: ARCH_HEIGHT }] },
+    openings: openingsOn('x', EAST_DIV) },
 
   // Bedroom / bathroom divider — no opening, both are reached from the hallway.
   { id: 'west-div', axis: 'x', at: WEST_DIV, from: X0, to: HALL_W, thickness: INT_WALL_T, surface: 'wall' }
@@ -155,41 +208,10 @@ export const WALLS: SolidSpec[] = WALL_RUNS.flatMap(expandWall)
 // Doors
 // ---------------------------------------------------------------------------
 
-export interface DoorSpec {
-  /** Interactable and hintTarget id. */
-  id: string
-  label: string
-  axis: 'x' | 'z'
-  /** Wall centreline, perpendicular axis. */
-  at: number
-  from: number
-  to: number
-  height: number
-  thickness: number
-  /** Which end of the opening the hinge sits on. */
-  hinge: 'from' | 'to'
-  /** Sign of the swing about the hinge. Verified visually, not derived. */
-  swing: 1 | -1
-}
+export type DoorSpec = OpeningSpec
 
-export const DOORS: DoorSpec[] = [
-  { id: 'frontDoor', label: 'front door', axis: 'x', at: EXT_S, from: -0.5, to: 0.5,
-    height: 2.1, thickness: EXT_WALL_T, hinge: 'from', swing: 1 },
-  { id: 'kitchenDoor', label: 'kitchen door', axis: 'z', at: HALL_E, from: -3.3, to: -2.4,
-    height: DOOR_HEIGHT, thickness: INT_WALL_T, hinge: 'from', swing: 1 },
-  { id: 'bedroomDoor', label: 'bedroom door', axis: 'z', at: HALL_W, from: -3.3, to: -2.4,
-    height: DOOR_HEIGHT, thickness: INT_WALL_T, hinge: 'from', swing: -1 },
-  { id: 'bathroomDoor', label: 'bathroom door', axis: 'z', at: HALL_W, from: 2.4, to: 3.3,
-    height: DOOR_HEIGHT, thickness: INT_WALL_T, hinge: 'to', swing: 1 }
-]
-
-/** Open archways get trim but no slab. */
-export const ARCHES: DoorSpec[] = [
-  { id: 'livingArch', label: 'living room arch', axis: 'z', at: HALL_E, from: 1.2, to: 3.2,
-    height: ARCH_HEIGHT, thickness: INT_WALL_T, hinge: 'from', swing: 1 },
-  { id: 'kitchenArch', label: 'kitchen arch', axis: 'x', at: EAST_DIV, from: 4.3, to: 5.7,
-    height: ARCH_HEIGHT, thickness: INT_WALL_T, hinge: 'from', swing: 1 }
-]
+export const DOORS: DoorSpec[] = OPENINGS.filter((o) => !o.arch)
+export const ARCHES: DoorSpec[] = OPENINGS.filter((o) => o.arch)
 
 // ---------------------------------------------------------------------------
 // Rooms
@@ -231,7 +253,7 @@ export const FURNITURE: SolidSpec[] = [
   { id: 'sofa-cushion-2', min: [4.98, 0.42, 2.25], max: [5.7, 0.54, 3.2], surface: 'fabric' },
   { id: 'armchair-base', min: [2.0, 0, 0.6], max: [2.85, 0.42, 1.45], surface: 'fabricWarm', castShadow: true },
   { id: 'armchair-back', min: [2.0, 0.42, 0.6], max: [2.22, 1.0, 1.45], surface: 'fabricWarm', castShadow: true },
-  { id: 'lr-side-table', min: [2.15, 0, 1.75], max: [2.6, 0.52, 2.2], surface: 'wood', castShadow: true },
+  { id: 'lr-side-table', min: [2.95, 0, 0.5], max: [3.4, 0.52, 0.95], surface: 'wood', castShadow: true },
   { id: 'tv-unit', min: [2.6, 0, 4.5], max: [4.9, 0.5, 4.95], surface: 'darkWood', castShadow: true },
   { id: 'tv-screen', min: [3.0, 0.55, 4.72], max: [4.5, 1.4, 4.8], surface: 'dark', castShadow: true },
   { id: 'bookshelf', min: [1.32, 0, 3.4], max: [1.74, 1.95, 4.6], surface: 'wood', castShadow: true },
@@ -246,8 +268,8 @@ export const FURNITURE: SolidSpec[] = [
   { id: 'sink-basin', min: [2.35, 0.82, -4.82], max: [3.25, 0.91, -4.42], surface: 'metal' },
   { id: 'stove-top', min: [4.35, 0.9, -4.88], max: [5.3, 0.95, -4.38], surface: 'dark' },
   { id: 'extractor', min: [4.35, 1.68, -4.95], max: [5.3, 2.1, -4.5], surface: 'metal', castShadow: true },
-  { id: 'fridge', min: [1.32, 0, -3.0], max: [2.08, 1.85, -2.2], surface: 'white', castShadow: true },
-  { id: 'fridge-handle', min: [2.08, 0.9, -2.85], max: [2.13, 1.6, -2.78], surface: 'metal' },
+  { id: 'fridge', min: [1.32, 0, -1.75], max: [2.08, 1.85, -0.95], surface: 'white', castShadow: true },
+  { id: 'fridge-handle', min: [2.08, 0.9, -1.6], max: [2.13, 1.6, -1.53], surface: 'metal' },
 
   // ---- Bedroom ----
   { id: 'bd-rug', min: [-5.0, 0, -2.5], max: [-2.6, 0.012, -0.5], surface: 'accent' },
@@ -261,7 +283,7 @@ export const FURNITURE: SolidSpec[] = [
   { id: 'wardrobe', min: [-3.3, 0, -4.95], max: [-1.45, 2.15, -4.25], surface: 'wood', castShadow: true },
   { id: 'wardrobe-handle-l', min: [-2.45, 1.0, -4.29], max: [-2.4, 1.35, -4.2], surface: 'metal' },
   { id: 'wardrobe-handle-r', min: [-2.35, 1.0, -4.29], max: [-2.3, 1.35, -4.2], surface: 'metal' },
-  { id: 'dresser', min: [-2.15, 0, -2.7], max: [-1.32, 0.9, -1.3], surface: 'wood', castShadow: true },
+  { id: 'dresser', min: [-2.15, 0, -1.9], max: [-1.32, 0.9, -0.5], surface: 'wood', castShadow: true },
 
   // ---- Bathroom ----
   { id: 'tub-rim-w', min: [-6.0, 0, 3.0], max: [-5.86, 0.58, 4.95], surface: 'white', castShadow: true },
@@ -273,8 +295,8 @@ export const FURNITURE: SolidSpec[] = [
   { id: 'vanity', min: [-4.05, 0, 0.92], max: [-2.5, 0.86, 1.55], surface: 'wood', castShadow: true },
   { id: 'vanity-top', min: [-4.1, 0.86, 0.9], max: [-2.45, 0.93, 1.6], surface: 'counter' },
   { id: 'mirror', min: [-3.95, 1.15, 0.86], max: [-2.6, 1.85, 0.89], surface: 'mirror' },
-  { id: 'towel-rail', min: [-2.0, 1.2, 2.2], max: [-1.94, 1.26, 3.1], surface: 'metal' },
-  { id: 'towel', min: [-2.06, 0.65, 2.3], max: [-1.94, 1.22, 2.95], surface: 'fabric' },
+  { id: 'towel-rail', min: [-2.25, 1.2, 0.86], max: [-1.5, 1.26, 0.92], surface: 'metal', blocking: false },
+  { id: 'towel', min: [-2.15, 0.62, 0.87], max: [-1.6, 1.22, 0.99], surface: 'fabric', blocking: false },
   { id: 'bath-mat', min: [-4.2, 0, 3.2], max: [-3.2, 0.014, 4.2], surface: 'fabric' },
 
   // ---- Hallway ----
@@ -368,7 +390,7 @@ export interface PlantSpec {
 
 export const PLANTS: PlantSpec[] = [
   { id: 'plant-lr', at: [1.8, 0.3], scale: 1.0 },
-  { id: 'plant-hall', at: [-0.9, 2.6], scale: 0.8 },
+  { id: 'plant-hall', at: [0.88, -0.7], scale: 0.8 },
   { id: 'plant-bath', at: [-1.7, 4.6], scale: 0.7 }
 ]
 
@@ -409,7 +431,7 @@ export const AUDIO_SOURCE_ANCHOR: [number, number, number] = [2.75, 0.5, 4.7]
 /** Small dressing props: id, position, kind. Built in code. */
 export const PROPS: { id: string; at: [number, number, number]; kind: string }[] = [
   { id: 'fruit-bowl', at: [1.95, 0.9, -4.62], kind: 'bowl' },
-  { id: 'kettle', at: [2.0, 0.9, -3.0], kind: 'kettle' },
+  { id: 'kettle', at: [4.8, 0.95, -4.6], kind: 'kettle' },
   { id: 'mug-1', at: [3.1, 0.75, -2.6], kind: 'mug' },
   { id: 'mug-2', at: [3.7, 0.75, -2.6], kind: 'mug' },
   { id: 'basin', at: [-3.27, 0.93, 1.25], kind: 'basin' },

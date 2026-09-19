@@ -94,7 +94,22 @@ shut door cannot be walked through and an open one cannot be walked into. The li
 room and kitchen arches have no slab.
 
 Walls are generated from runs plus openings rather than written out segment by segment —
-hand-placed segments are how doorways end up one wall-thickness out of position.
+hand-placed segments are how doorways end up one wall-thickness out of position. Every
+opening is declared once, in `OPENINGS`, and both the wall gaps and the door slabs derive
+from it.
+
+**Doorways are sized against the collider, not against realism.** The player is an
+axis-aligned box of half-width `PLAYER_RADIUS` (0.24 m), not a capsule, so its corners
+catch on jambs; an open door's own bounding box also eats into the opening at the hinge.
+Interior doorways are therefore 1.0 m and the front door 1.1 m — wider than a real house.
+
+**`auditDoorways` runs at start-up and is not optional.** It walks a player-sized box
+through every opening with the door open and reports the usable width, logging an error
+for anything under 0.68 m. Furniture placed a few centimetres inside a doorway makes it
+silently impassable — the wall is clear, the door swings, the player still cannot get
+through, and a screenshot shows nothing wrong. Clearance is measured, never eyeballed.
+This caught a fridge behind the kitchen door, a dresser behind the bedroom door, a plant
+and a towel rail in the bathroom doorway, and a side table in the living room arch.
 
 **Degradation contract — the fallback must itself have a fallback:**
 

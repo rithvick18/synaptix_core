@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { PLAYER_BODY_MAX_Y, PLAYER_BODY_MIN_Y, PLAYER_RADIUS } from './layout'
 import type { State } from './State'
 
 /**
@@ -9,9 +10,9 @@ import type { State } from './State'
  */
 
 const EYE_HEIGHT = 1.6
-const RADIUS = 0.3
-const BODY_MIN_Y = 0.15
-const BODY_MAX_Y = 1.75
+const RADIUS = PLAYER_RADIUS
+const BODY_MIN_Y = PLAYER_BODY_MIN_Y
+const BODY_MAX_Y = PLAYER_BODY_MAX_Y
 const SPEED = 2.6
 const PITCH_LIMIT = Math.PI / 2 - 0.02
 const LOOK_SENSITIVITY = 0.0022
