@@ -85,6 +85,7 @@ export interface TextChoice {
 export type ChoiceFormat = 'person' | 'text'
 
 export interface RecallStep {
+  memory?: { photo?: string; caption: string }
   type: 'recall'
   question: string
   /** Defaults to `person` when a pack omits it, which keeps §4.1's example valid. */
@@ -582,6 +583,7 @@ export class MissionRunner {
 
     this.deps.ui.showAnswerCard({
       question: step.question,
+      memory: step.memory ? { photo: step.memory.photo ? this.deps.media?.resolver?.resolve(step.memory.photo, true) : undefined, caption: step.memory.caption } : undefined,
       choices: cards,
       revealedId: null,
       note: null,

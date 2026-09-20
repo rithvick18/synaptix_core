@@ -578,3 +578,129 @@ report that alongside. Check the cap by timing `requestAnimationFrame` on a blan
 **Not built.** An audio-cue step type — a step whose prompt is a sound rather than a
 sentence — was anticipated in §6 and is still not implemented. The three levels use
 `navigate`, `find` and `recall` only.
+
+## 9. Caregiver personalisation (local browser profile)
+
+The level-selection screen offers **Personalise Home**, or **Edit Profile** while a local
+profile is active. The editor supports one saved local profile, alongside the bundled
+Mira and Raju demo profiles. Switching to a demo keeps the saved local profile available
+through Personalise Home. Save and Play selects the local profile, reloads its media and
+starts level 1. Returning with L offers all three levels. Cancel discards draft edits.
+Delete Profile requires an explicit confirmation and removes the saved originals,
+derivatives, metadata and crop settings together, selecting Mira again.
+
+### Content and recall
+
+Caregivers enter the display name, person names and relationships, event caption, and
+all personalised recall questions, choices, correct answers and hints. Nothing is
+inferred from a photograph. The first portrait appears both in the bedside frame and
+as a recall choice; further portraits are recall choices. Every upload shows its
+specific destination, thumbnail, Replace and Remove controls, and crop-position sliders.
+The living-room wall image uses the existing `livingRoomWall` anchor; a separate
+`eventFrame` anchor is mounted alongside it. This optional anchor extends the world
+contract without changing required interactables or navigation.
+
+The editor previews the actual frame aspect ratios: wall/event 0.95 / 0.7, bedside
+0.2 / 0.26, portrait card 1 / 1. Horizontal position, vertical position and zoom are
+stored separately from media. The first portrait shows both destinations. Questions
+can explicitly reference the wall, event or a person; the selected reference photograph
+and caregiver event caption appear with recall. A caption may itself contain a cue,
+so caregivers should choose wording appropriate to their questions.
+
+**Skip personalised recall until valid questions are supplied** defaults on. This makes
+image-only personalisation usable across all three levels. It removes recall steps
+before play; the export explicitly records `recallSkipped`, rather than inventing
+outcomes for questions that never ran. Walking and finding steps are retained. When
+recall is enabled, at least one caregiver question must be supplied for each of levels
+1 and 3. Level 2 remains the existing walking/finding sequence. Each question requires
+non-empty wording and both written hints, at least two distinct non-empty choices,
+a known content reference, and an explicitly selected answer in those choices. Text
+questions support 2–6 choices; person questions use the entered people. The second
+hint reduces choices deterministically, retaining the answer. Stable UUIDs identify
+profiles, people, photographs, memories, questions and text choices.
+
+Personal packs copy only navigation/find tasks from the bundled level definitions.
+They replace all people, anchors, descriptions and recall content; no fictional demo
+question, answer, voice or identity is applied to a real uploaded image. An empty
+people list is accepted only through the explicitly enabled local-profile validation
+path. The shared pack validator still checks generated levels against world IDs and
+recall references. Existing hints, pause, restart, progression, outcomes and per-step
+telemetry remain in the same mission runner.
+
+### Image pipeline and lifetime
+
+JPEG, PNG and WebP are accepted. Unsupported formats and decode failures are displayed
+in the editor, leaving the previous draft image intact. Browser decoding applies EXIF
+orientation. The untouched original Blob is retained. Canvas creates an aspect-preserving
+JPEG runtime derivative at quality 0.94, capped at 2048 pixels on the longest side by
+default. Optional high quality caps at the smaller of 4096 and the active device's
+`MAX_TEXTURE_SIZE`; the same device cap applies to standard quality. Neither setting
+upscales small sources. Transparent source areas are composited onto white photo paper.
+A separate 384-pixel derivative supplies editor thumbnails and recall previews.
+
+Cropping is non-destructive: runtime frame UVs and preview canvas use the same crop
+rectangle calculation. Photographs are never stretched. Portrait cards receive cropped
+square thumbnail Blobs; reference photographs keep their original aspect. Textures use
+sRGB, mipmaps, trilinear minification and the renderer's supported anisotropy. Photo
+plates use unlit, non-tone-mapped materials to avoid scene glare/darkening; focus tint
+applies to their frames rather than the photographs. Renderer pixel ratio remains 1,
+independent of photo quality. Full-resolution image bitmaps close after each conversion;
+saving converts one original at a time.
+
+`MediaResolver` handles both demo paths and local media IDs. It recreates temporary
+object URLs from stored derivative Blobs. Editor preview URLs are revoked on replacement,
+removal, rerender and close. `PackMedia.dispose` releases textures, URLs and media maps
+when changing the loaded profile (page reload) or leaving the page. Back/forward cache
+restoration reloads the disposed media. If any choice photo fails, the entire question
+uses text cards; a late DOM image error also switches the entire current question to
+text, and that fallback remains in force when hints reduce the choices.
+
+### Storage and export
+
+IndexedDB database `smriti-caregiver-v1`, object store `profiles`, holds the complete
+local profile under `local` and the selected profile ID under `selected`. Original,
+runtime and thumbnail media are Blobs, never base64 or localStorage entries. A single
+read/write transaction commits metadata, crop settings, media and selection atomically.
+An aborted or quota-failed save leaves the last successfully committed profile intact;
+the editor keeps the draft and displays a retryable failure. A storage read failure
+is reported on the level screen while demo play remains available.
+
+Profiles stay in this browser, on this device and origin. There is no media upload,
+server synchronisation or cross-device backup. Clearing browser data or browser eviction
+can remove profiles. An explicit `?patient=mira` / `?patient=raju` URL selects that demo;
+Save and Play clears this override. Otherwise refresh restores the saved selection.
+
+Local session exports omit the profile display name, person names, relationships,
+questions, answers as prose, captions, photographs and object URLs. They contain opaque
+profile/person/memory IDs and question IDs mapped to their content IDs and step indices,
+plus the existing per-step events and outcomes. Answer events contain stable choice IDs.
+Bundled demo exports retain their existing format, including fictional patient name.
+
+### Reproducible checks and manual acceptance
+
+- `npm run build`: production TypeScript and Vite build.
+- `npm run check`: existing pack/mission and telemetry checks, with the browser harness
+  also typechecked against source.
+- `npm run check:profile`: isolated headless Chrome + Vite dev; real IndexedDB and image
+  APIs. Covers format/decode failure, EXIF orientation, derivative/thumbnail limits,
+  no upscaling, device cap, replacement, crop geometry, question validation, absence
+  of demo content, URL cleanup, transaction abort and quota recovery, reload persistence,
+  editor preview/remove/cancel/upload/save-and-play, export privacy, demo switching and
+  deletion. Uses generated test images and a disposable browser profile.
+- `npm run check:offline`: production build, network disabled, all three demo levels,
+  hints/outcomes/session isolation and interactable reachability.
+
+Manual walkthrough: Personalise Home → enter a display name → upload wall, person and
+optional event photographs → preview and position each crop → keep Skip personalised
+recall on (or supply validated questions) → Save and Play → play levels 1–3 → refresh →
+L / Edit Profile to confirm photographs and crops persist → Use Demo Profile — Mira
+or Raju. Manually assess photo legibility and crop positions in the actual rooms,
+portrait cards, EXIF phone photos, and gameplay on the intended device. Automated
+checks do not establish visual quality or frame-time performance.
+
+Implementation verification: production build passed (Vite reports a large
+bundle warning); 445 pack/mission/telemetry assertions and 92 production offline
+assertions passed. The profile browser harness covers 40 checks, including all three
+personal levels with explicit recall and sticky late-image fallback. The graphify audit
+in `graphify-out/` describes the pre-change baseline, with its extraction gaps and
+unavailable token usage disclosed in `GRAPH_REPORT.md`; it is marked for update.

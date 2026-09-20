@@ -432,7 +432,8 @@ export function dwellByObject(events: readonly Event[]): DwellTotal[] {
 export interface ExportContext {
   /** Which pack the content came from — `?patient=` (§6 Checkpoint C). */
   patientId: string
-  patientName: string
+  patientName?: string
+  content?: { profileId: string; personIds: string[]; memoryIds: string[]; recallSkipped: boolean; questions: { id: string; contentId: string; stepIndex: number }[] }
   /** Which level: its mission id, its position in the pack, and its title. */
   levelId: string | null
   levelIndex: number | null
@@ -455,7 +456,8 @@ export interface ExportDocument {
    */
   notDiagnostic: string
   comparability: string
-  patient: { id: string; name: string }
+  patient: { id: string; name?: string }
+  content?: ExportContext['content']
   /** Which of the pack's levels this attempt played. */
   level: { id: string | null; index: number | null; title: string | null }
   /** Kept as an alias of `level` for anything reading the pre-levels export shape. */
@@ -492,7 +494,8 @@ export function buildExport(events: readonly Event[], context: ExportContext): E
     generatedAt: new Date().toISOString(),
     notDiagnostic: NOT_DIAGNOSTIC,
     comparability: 'Compare only against the same patient’s past sessions.',
-    patient: { id: context.patientId, name: context.patientName },
+    patient: { id: context.patientId, ...(context.patientName !== undefined ? { name: context.patientName } : {}) },
+    content: context.content,
     level: {
       // The log's own mission id wins over the caller's: it is what was actually played.
       id: summary.missionId ?? context.levelId,

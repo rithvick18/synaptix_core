@@ -1,0 +1,260 @@
+{
+  "package.json": {
+    "mtime": 1789854907.503543,
+    "seen": 1789878520.4353468,
+    "ast_hash": "10765e7cbc97d4764820fe507f6d0820",
+    "semantic_hash": "10765e7cbc97d4764820fe507f6d0820"
+  },
+  "public/packs/broken/pack.json": {
+    "mtime": 1789854748.336627,
+    "seen": 1789878520.43535,
+    "ast_hash": "606f6afc3bac66b877993614b8a299ec",
+    "semantic_hash": "606f6afc3bac66b877993614b8a299ec"
+  },
+  "public/packs/mira/pack.json": {
+    "mtime": 1789855462.1047912,
+    "seen": 1789878520.4353511,
+    "ast_hash": "15762c3dfb388d2f2fa48bbe1dc700f5",
+    "semantic_hash": "15762c3dfb388d2f2fa48bbe1dc700f5"
+  },
+  "public/packs/raju/pack.json": {
+    "mtime": 1789855462.104996,
+    "seen": 1789878520.435352,
+    "ast_hash": "5f6493e9a636cb95307077b096eb61fd",
+    "semantic_hash": "5f6493e9a636cb95307077b096eb61fd"
+  },
+  "src/Interaction.ts": {
+    "mtime": 1789763308.866305,
+    "seen": 1789878520.435352,
+    "ast_hash": "8667b6ab987821a857121ec191bbdb1b",
+    "semantic_hash": "8667b6ab987821a857121ec191bbdb1b"
+  },
+  "src/MemoryPack.ts": {
+    "mtime": 1789854269.4676383,
+    "seen": 1789878520.435352,
+    "ast_hash": "550a35a32aa336a98cdf6504bf3b6328",
+    "semantic_hash": "550a35a32aa336a98cdf6504bf3b6328"
+  },
+  "src/Missions.ts": {
+    "mtime": 1789854208.8940558,
+    "seen": 1789878520.435353,
+    "ast_hash": "b5831e3f713695344bc34c3acdc24802",
+    "semantic_hash": "b5831e3f713695344bc34c3acdc24802"
+  },
+  "src/Player.ts": {
+    "mtime": 1789854635.2466078,
+    "seen": 1789878520.435353,
+    "ast_hash": "8aa6950ab4e60156e617a64e1b7a5256",
+    "semantic_hash": "8aa6950ab4e60156e617a64e1b7a5256"
+  },
+  "src/Renderer.ts": {
+    "mtime": 1789851581.9850936,
+    "seen": 1789878520.435353,
+    "ast_hash": "11ce5b3a308205a67c86ccc497ac6e8f",
+    "semantic_hash": "11ce5b3a308205a67c86ccc497ac6e8f"
+  },
+  "src/State.ts": {
+    "mtime": 1789760067.7994711,
+    "seen": 1789878520.435354,
+    "ast_hash": "eeac74ca04c890bb0399d38a65cdf16f",
+    "semantic_hash": "eeac74ca04c890bb0399d38a65cdf16f"
+  },
+  "src/Telemetry.ts": {
+    "mtime": 1789854455.0231137,
+    "seen": 1789878520.435354,
+    "ast_hash": "dbb40b2be18a05645b55b49dee8f3e58",
+    "semantic_hash": "dbb40b2be18a05645b55b49dee8f3e58"
+  },
+  "src/World.ts": {
+    "mtime": 1789854316.9898238,
+    "seen": 1789878520.435354,
+    "ast_hash": "34b120f95ebe1f0e2ee787555add7684",
+    "semantic_hash": "34b120f95ebe1f0e2ee787555add7684"
+  },
+  "src/layout.ts": {
+    "mtime": 1789855383.9292061,
+    "seen": 1789878520.435355,
+    "ast_hash": "fc021b71224bd9f962f9502be0e5afdc",
+    "semantic_hash": "fc021b71224bd9f962f9502be0e5afdc"
+  },
+  "src/main.ts": {
+    "mtime": 1789855462.1052394,
+    "seen": 1789878520.435355,
+    "ast_hash": "31b8ef5bd2df3804c6f68399b7e6b823",
+    "semantic_hash": "31b8ef5bd2df3804c6f68399b7e6b823"
+  },
+  "src/proceduralHouse.ts": {
+    "mtime": 1789855425.8679976,
+    "seen": 1789878520.435355,
+    "ast_hash": "0542bbfa31c3dab4889030a17349c923",
+    "semantic_hash": "0542bbfa31c3dab4889030a17349c923"
+  },
+  "src/ui.ts": {
+    "mtime": 1789854404.4468637,
+    "seen": 1789878520.435356,
+    "ast_hash": "e65cbd227406da234a6b3e80efde0788",
+    "semantic_hash": "e65cbd227406da234a6b3e80efde0788"
+  },
+  "tools/checks/pack.check.ts": {
+    "mtime": 1789854995.8038466,
+    "seen": 1789878520.435356,
+    "ast_hash": "e755dff2f0c894916f5ada6056c1dea2",
+    "semantic_hash": "e755dff2f0c894916f5ada6056c1dea2"
+  },
+  "tools/checks/run.mjs": {
+    "mtime": 1789854917.4780655,
+    "seen": 1789878520.435356,
+    "ast_hash": "088d2f752dd7fe5b0952035dd79b0e94",
+    "semantic_hash": "088d2f752dd7fe5b0952035dd79b0e94"
+  },
+  "tools/checks/telemetry.check.ts": {
+    "mtime": 1789854887.9725866,
+    "seen": 1789878520.4353569,
+    "ast_hash": "800324e2a6749acfcddb9886428bf05b",
+    "semantic_hash": "800324e2a6749acfcddb9886428bf05b"
+  },
+  "tools/checks/tsconfig.json": {
+    "mtime": 1789854901.199267,
+    "seen": 1789878520.4353569,
+    "ast_hash": "543d8943eb69ba23efaa0da37982354f",
+    "semantic_hash": "543d8943eb69ba23efaa0da37982354f"
+  },
+  "tools/make-media.sh": {
+    "mtime": 1789845924.494886,
+    "seen": 1789878520.4353569,
+    "ast_hash": "1f6ab8dc34a2db446aa2366c091eb4b2",
+    "semantic_hash": "1f6ab8dc34a2db446aa2366c091eb4b2"
+  },
+  "tools/make-photos.py": {
+    "mtime": 1789845990.573126,
+    "seen": 1789878520.4353569,
+    "ast_hash": "ab36630a11986b0c18a7d92caf2cc0dc",
+    "semantic_hash": "ab36630a11986b0c18a7d92caf2cc0dc"
+  },
+  "tools/offline-check.mjs": {
+    "mtime": 1789855075.1319218,
+    "seen": 1789878520.435358,
+    "ast_hash": "a4e720fc523e46733ece7ae9be5cfad8",
+    "semantic_hash": "a4e720fc523e46733ece7ae9be5cfad8"
+  },
+  "tsconfig.json": {
+    "mtime": 1789759844.8976915,
+    "seen": 1789878520.435358,
+    "ast_hash": "d812eb8c9fcac77fd9d0656672ee9a4f",
+    "semantic_hash": "d812eb8c9fcac77fd9d0656672ee9a4f"
+  },
+  "vite.config.ts": {
+    "mtime": 1789759844.9009771,
+    "seen": 1789878520.435359,
+    "ast_hash": "6687e88277bfe65208ac1fce42f22dcb",
+    "semantic_hash": "6687e88277bfe65208ac1fce42f22dcb"
+  },
+  "DEPLOY.md": {
+    "mtime": 1789760529.7936375,
+    "seen": 1789878520.435359,
+    "ast_hash": "49e9319841f1f41e1a1eb65dff93a961",
+    "semantic_hash": "49e9319841f1f41e1a1eb65dff93a961"
+  },
+  "README.md": {
+    "mtime": 1789855608.031741,
+    "seen": 1789878520.435359,
+    "ast_hash": "bb2cd8177dfdb3cab81a5c97d913e012",
+    "semantic_hash": "bb2cd8177dfdb3cab81a5c97d913e012"
+  },
+  "SPEC.md": {
+    "mtime": 1789855546.289719,
+    "seen": 1789878520.435359,
+    "ast_hash": "b6ba9a12c95eb43ea828a53d4d425103",
+    "semantic_hash": "b6ba9a12c95eb43ea828a53d4d425103"
+  },
+  "index.html": {
+    "mtime": 1789846500.5789618,
+    "seen": 1789878520.43536,
+    "ast_hash": "b8b4acaaaae5cd7f9e28d8ac00ad7081",
+    "semantic_hash": "b8b4acaaaae5cd7f9e28d8ac00ad7081"
+  },
+  "public/packs/mira/ananya.jpg": {
+    "mtime": 1789845994.9529698,
+    "seen": 1789878520.43536,
+    "ast_hash": "90723974c4f8381e85bd943f30390145",
+    "semantic_hash": "90723974c4f8381e85bd943f30390145"
+  },
+  "public/packs/mira/bihu.jpg": {
+    "mtime": 1789845994.973809,
+    "seen": 1789878520.43536,
+    "ast_hash": "c565eb08832f64934454eca7756bbaf4",
+    "semantic_hash": "c565eb08832f64934454eca7756bbaf4"
+  },
+  "public/packs/mira/bina.jpg": {
+    "mtime": 1789845994.994532,
+    "seen": 1789878520.435361,
+    "ast_hash": "088c147ccda9573335f596be712b2f5f",
+    "semantic_hash": "088c147ccda9573335f596be712b2f5f"
+  },
+  "public/packs/mira/rupa.jpg": {
+    "mtime": 1789845995.0143895,
+    "seen": 1789878520.435361,
+    "ast_hash": "b5f8a5db305b62201cc554a55131a638",
+    "semantic_hash": "b5f8a5db305b62201cc554a55131a638"
+  },
+  "public/packs/raju/chilika.jpg": {
+    "mtime": 1789845995.0359867,
+    "seen": 1789878520.435361,
+    "ast_hash": "12b3b2a012587f329def5a74c7c4b3fd",
+    "semantic_hash": "12b3b2a012587f329def5a74c7c4b3fd"
+  },
+  "public/packs/raju/iqbal.jpg": {
+    "mtime": 1789845995.056794,
+    "seen": 1789878520.435362,
+    "ast_hash": "78808bf879b9358bf72977bb72fa832c",
+    "semantic_hash": "78808bf879b9358bf72977bb72fa832c"
+  },
+  "public/packs/raju/manoj.jpg": {
+    "mtime": 1789845995.0770757,
+    "seen": 1789878520.435362,
+    "ast_hash": "7055a7aba3b0d4b5c03e29e777f5a5ed",
+    "semantic_hash": "7055a7aba3b0d4b5c03e29e777f5a5ed"
+  },
+  "public/packs/raju/sarita.jpg": {
+    "mtime": 1789845995.0969658,
+    "seen": 1789878520.435362,
+    "ast_hash": "ea9218dfda18db5e0abfeaabb645c4f8",
+    "semantic_hash": "ea9218dfda18db5e0abfeaabb645c4f8"
+  },
+  "public/packs/mira/ananya.mp3": {
+    "mtime": 1789845995.7949495,
+    "seen": 1789878520.435363,
+    "ast_hash": "ebebfe7adde16606a93c30ed17b8595b",
+    "semantic_hash": "ebebfe7adde16606a93c30ed17b8595b"
+  },
+  "public/packs/mira/bina.mp3": {
+    "mtime": 1789845996.3654506,
+    "seen": 1789878520.435363,
+    "ast_hash": "6c6fd53e3dd76d7147eaf8f8bb78418d",
+    "semantic_hash": "6c6fd53e3dd76d7147eaf8f8bb78418d"
+  },
+  "public/packs/mira/rupa.mp3": {
+    "mtime": 1789845996.8099625,
+    "seen": 1789878520.435363,
+    "ast_hash": "1ecf03ca015098adb1ac5d844b4e9555",
+    "semantic_hash": "1ecf03ca015098adb1ac5d844b4e9555"
+  },
+  "public/packs/raju/iqbal.mp3": {
+    "mtime": 1789845998.4079237,
+    "seen": 1789878520.435364,
+    "ast_hash": "d6acd24d5e33050857c35cb99f210ce7",
+    "semantic_hash": "d6acd24d5e33050857c35cb99f210ce7"
+  },
+  "public/packs/raju/manoj.mp3": {
+    "mtime": 1789845997.2851202,
+    "seen": 1789878520.435364,
+    "ast_hash": "885ee5a6f630daff81df3f95a76d3711",
+    "semantic_hash": "885ee5a6f630daff81df3f95a76d3711"
+  },
+  "public/packs/raju/sarita.mp3": {
+    "mtime": 1789845997.7238805,
+    "seen": 1789878520.435364,
+    "ast_hash": "95cfab9db802e37570ad288c56f14c15",
+    "semantic_hash": "95cfab9db802e37570ad288c56f14c15"
+  }
+}

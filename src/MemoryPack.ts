@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { MediaResolver, cropRect } from './PhotoMedia'
+import type { Crop } from './LocalProfile'
 import type {
   ChoiceFormat,
   DemoNotice,
@@ -90,7 +92,7 @@ class Problems {
 // ---------------------------------------------------------------------------
 
 export function resolvePackPath(path: string): string {
-  if (/^https?:\/\//i.test(path) || path.startsWith('data:')) return path
+  if (/^(https?:|data:|blob:)/i.test(path)) return path
   const base = typeof document !== 'undefined' ? document.baseURI : 'http://localhost/'
   return new URL(path.replace(/^\/+/, ''), base).href
 }
@@ -144,7 +146,7 @@ export const REDUCE_SENTINEL = 'reduce'
  * provides (§1). Returns the typed pack alongside every problem found — including when
  * some of them are fatal, so the caller can list them all.
  */
-export function validate(raw: unknown, world: WorldSource): { pack: MemoryPack | null; problems: PackProblem[] } {
+export function validate(raw: unknown, world: WorldSource, allowEmptyPeople = false): { pack: MemoryPack | null; problems: PackProblem[] } {
   const p = new Problems()
 
   if (!isObject(raw)) {
@@ -164,7 +166,7 @@ export function validate(raw: unknown, world: WorldSource): { pack: MemoryPack |
   // --- people ----------------------------------------------------------------
   const people: Person[] = []
   const peopleIds = new Set<string>()
-  if (!Array.isArray(raw.people) || raw.people.length === 0) {
+  if (!Array.isArray(raw.people) || (!allowEmptyPeople && raw.people.length === 0)) {
     p.reject('people-missing', 'people', 'A pack must list at least one person.')
   } else {
     raw.people.forEach((entry: unknown, i: number) => {
@@ -540,6 +542,7 @@ function validateStep(raw: unknown, at: string, ctx: StepContext, p: Problems): 
     if (choiceType === 'text' && options.length < 2) return null
     return {
       type: 'recall',
+      memory: isObject(raw.memory) ? { photo: str(raw.memory.photo) ?? undefined, caption: str(raw.memory.caption) ?? '' } : undefined,
       question,
       choiceType,
       choices,
@@ -568,6 +571,8 @@ export class PackMedia {
   private photos = new Map<string, string>()
   private voices = new Map<string, AudioBuffer>()
   private styles = new Map<string, CardStyle>()
+  readonly crops = new Map<string, Crop>()
+  resolver?: MediaResolver
   readonly anchorTextures = new Map<string, THREE.Texture>()
 
   /** A usable, already-decoded photo URL for this person, or null. */
@@ -602,6 +607,11 @@ export class PackMedia {
   dispose(): void {
     for (const texture of this.anchorTextures.values()) texture.dispose()
     this.anchorTextures.clear()
+    this.photos.clear()
+    this.voices.clear()
+    this.styles.clear()
+    this.crops.clear()
+    this.resolver?.dispose()
   }
 }
 
@@ -661,6 +671,8 @@ function placeholderTexture(): THREE.Texture {
 }
 
 export interface MediaOptions {
+  resolver?: MediaResolver
+  anisotropy?: number
   /** `?break=` tokens — see `breakagesFromLocation`. */
   breakages?: Set<string>
   /** Reports item counts to the loading screen. Never bytes — see ui.ts `LoadStage`. */
@@ -677,6 +689,8 @@ export async function loadMedia(
 ): Promise<{ media: PackMedia; problems: PackProblem[] }> {
   const broken = options.breakages ?? new Set<string>()
   const media = new PackMedia()
+  const resolver = options.resolver ?? new MediaResolver()
+  media.resolver = resolver
   const problems: PackProblem[] = []
 
   // The denominator is every file this pack names — anchors, photos and voices. It is
@@ -692,7 +706,7 @@ export async function loadMedia(
 
   /** Rewrites a path to one that cannot resolve, so the real failure path runs. */
   const path = (token: string, raw: string): string =>
-    broken.has(token) ? resolvePackPath(`${raw}.__missing__`) : resolvePackPath(raw)
+    broken.has(token) ? resolvePackPath(`${raw}.__missing__`) : resolver.resolve(raw)
 
   const jobs: Promise<void>[] = []
 
@@ -702,6 +716,11 @@ export async function loadMedia(
       loadTexture(path(`anchor:${anchorId}`, raw)).then((texture) => {
         settled(texture !== null)
         if (texture) {
+          texture.anisotropy = options.anisotropy ?? 1
+          texture.generateMipmaps = true
+          texture.minFilter = THREE.LinearMipmapLinearFilter
+          const crop = resolver.crop(raw)
+          if (crop) media.crops.set(anchorId, crop)
           media.anchorTextures.set(anchorId, texture)
           return
         }
@@ -720,7 +739,7 @@ export async function loadMedia(
   for (const person of pack.people) {
     if (person.photo) {
       jobs.push(
-        loadImage(path(`photo:${person.id}`, person.photo)).then((img) => {
+        (broken.has(`photo:${person.id}`) ? Promise.resolve(path(`photo:${person.id}`, person.photo)) : resolver.portrait(person.photo)).then(loadImage).then((img) => {
           settled(img !== null)
           if (img) {
             media.setPhoto(person.id, img.src)
@@ -808,19 +827,14 @@ function plateOf(anchor: THREE.Object3D): THREE.Mesh | null {
  * Cover-crops a square photo into a frame of a different aspect, so a portrait is not
  * squashed sideways into a landscape frame.
  */
-function fitToPlate(texture: THREE.Texture, plate: THREE.Mesh): void {
+function fitToPlate(texture: THREE.Texture, plate: THREE.Mesh, crop: Crop = { x: .5, y: .5, zoom: 1 }): void {
   const params = (plate.geometry as THREE.PlaneGeometry).parameters
   const image = texture.image as { width?: number; height?: number } | undefined
   if (!params || !image?.width || !image?.height) return
   const frame = params.width / params.height
-  const photo = image.width / image.height
-  texture.center.set(0.5, 0.5)
-  if (photo > frame) {
-    texture.repeat.set(frame / photo, 1)
-  } else {
-    texture.repeat.set(1, photo / frame)
-  }
-  texture.offset.set((1 - texture.repeat.x) / 2, (1 - texture.repeat.y) / 2)
+  const [x, y, w, h] = cropRect(image.width, image.height, frame, crop)
+  texture.repeat.set(w / image.width, h / image.height)
+  texture.offset.set(x / image.width, 1 - (y + h) / image.height)
 }
 
 /**
@@ -844,13 +858,13 @@ export function injectAnchors(world: WorldSource, media: PackMedia): PackProblem
       })
       continue
     }
-    fitToPlate(texture, plate)
+    fitToPlate(texture, plate, media.crops.get(anchorId))
     // The plate's material is its own instance (built per frame), so this needs no
     // clone — §5.3's rule is about *shared* materials.
-    const material = plate.material as THREE.MeshStandardMaterial
-    material.map = texture
-    material.color.set(0xffffff)
-    material.needsUpdate = true
+    // Unlit, colour-managed photo paper avoids scene glare and darkening.
+    const old = plate.material as THREE.Material
+    plate.material = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
+    old.dispose()
   }
   return problems
 }

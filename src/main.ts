@@ -1,3 +1,6 @@
+import { profileStore, profilePack, type LocalProfile } from './LocalProfile'
+import { MediaResolver } from './PhotoMedia'
+import { openProfileEditor } from './ProfileEditor'
 import * as THREE from 'three'
 import { Interaction } from './Interaction'
 import {
@@ -6,6 +9,8 @@ import {
   breakagesFromLocation,
   injectAnchors,
   loadPack,
+  loadMedia,
+  validate,
   patientIdFromLocation,
   type LoadedPack
 } from './MemoryPack'
@@ -24,7 +29,7 @@ import {
   summarise,
   type Event
 } from './Telemetry'
-import { UI, type LoadStage } from './ui'
+import { UI, escapeText, type LoadStage } from './ui'
 import { assertWorldContract } from './World'
 import { createProceduralHouse } from './proceduralHouse'
 
@@ -95,7 +100,14 @@ async function boot(): Promise<void> {
 
   // §6 Checkpoint C: `?patient=raju` changes photos, audible voice and name. The id is
   // a path segment, so MemoryPack validates its shape before interpolating it.
-  const patientId = patientIdFromLocation(location.search)
+  let savedProfile: LocalProfile | undefined
+  let selectedProfile: string | undefined
+  let storageWarning = ''
+  try { const stored = await profileStore.read(); savedProfile = stored.profile; selectedProfile = stored.selected }
+  catch { storageWarning = 'Browser storage is unavailable. Saved photos could not be restored. You can play a demo or retry Personalise Home.' }
+  const explicitDemo = new URLSearchParams(location.search).get('patient')
+  const activeProfile = !explicitDemo && savedProfile?.id === selectedProfile ? savedProfile : undefined
+  const patientId = patientIdFromLocation(location.search, selectedProfile === 'raju' ? 'raju' : 'mira')
   const breakages = breakagesFromLocation(location.search)
 
   /**
@@ -158,7 +170,15 @@ async function boot(): Promise<void> {
   // obvious the engine is fine and the *pack* is not.
   let loaded: LoadedPack
   try {
-    loaded = await loadPack(patientId, world, { breakages, onProgress: progress })
+    loaded = await loadPack(patientId, world, { breakages, onProgress: progress, anisotropy: renderer.renderer.capabilities.getMaxAnisotropy() })
+    if (activeProfile) {
+      const personal = profilePack(activeProfile, loaded.pack)
+      const checked = validate(personal, world, true)
+      if (!checked.pack) throw new PackRejected(activeProfile.id, checked.problems)
+      loaded.media.dispose()
+      const result = await loadMedia(checked.pack, { resolver: new MediaResolver(activeProfile), anisotropy: renderer.renderer.capabilities.getMaxAnisotropy() })
+      loaded = { patientId: activeProfile.id, pack: checked.pack, ...result }
+    }
   } catch (error) {
     if (!(error instanceof PackRejected)) throw error
     console.error('[smriti] pack rejected', error.problems)
@@ -244,7 +264,14 @@ async function boot(): Promise<void> {
 
   const exportContext = () => ({
     patientId: loaded.patientId,
-    patientName: pack.patient.name,
+    patientName: activeProfile ? undefined : pack.patient.name,
+    content: activeProfile ? {
+      profileId: activeProfile.id,
+      personIds: activeProfile.people.map(p => p.id),
+      memoryIds: [activeProfile.wall ? activeProfile.wallId : null, activeProfile.event ? activeProfile.eventId : null].filter((id): id is string => !!id),
+      recallSkipped: activeProfile.skipRecall,
+      questions: activeProfile.skipRecall ? [] : activeProfile.questions.filter(q => q.level === levelIndex).map((q, index) => ({ id: q.id, contentId: q.contentId, stepIndex: levels[levelIndex].steps.filter(s => s.type !== 'recall').length + index }))
+    } : undefined,
     levelId: levels[levelIndex]?.id ?? null,
     levelIndex: levelIndex >= 0 ? levelIndex : null,
     levelTitle: levels[levelIndex]?.title ?? null,
@@ -359,6 +386,9 @@ async function boot(): Promise<void> {
     player.releaseLock()
 
     ui.showLevelSelect({
+      onPersonalise: () => openProfileEditor(savedProfile, renderer.renderer.capabilities.maxTextureSize, () => player.clearInput()),
+      personalisationLabel: activeProfile ? 'Edit Profile' : 'Personalise Home',
+      storageWarning,
       title: `Smriti — ${pack.patient.name}`,
       subtitle:
         `Three levels from the memory pack "${loaded.patientId}". ` +
@@ -510,6 +540,7 @@ async function boot(): Promise<void> {
   document.addEventListener('click', onClick)
 
   document.addEventListener('keydown', (e) => {
+    if (document.querySelector('#profile-editor')) return
     if (e.code === 'Escape') {
       // While `exploring` the browser exits pointer lock and the pointerlockchange
       // handler pauses. In `answering` the pointer is *already* unlocked — no such
@@ -551,6 +582,12 @@ async function boot(): Promise<void> {
 
   // The first thing the player sees once the pack is in: which levels there are.
   showLevels()
+  window.addEventListener('pageshow', e => { if (e.persisted) location.reload() })
+  window.addEventListener('pagehide', () => { voices.stop(); loaded.media.dispose() }, { once: true })
+  if (activeProfile && new URLSearchParams(location.search).get('play') === '1') {
+    history.replaceState(null, '', location.pathname)
+    startLevel(0)
+  }
 
   // Performance measurement (§7). renderer.info gives draw calls and triangles only;
   // frame time is sampled here over FRAME_SAMPLES frames once the world is up.
@@ -634,7 +671,7 @@ async function boot(): Promise<void> {
 
     const step = runner?.current ?? null
     ui.setHud(
-      `pack <b>${loaded.patientId}</b> · ${pack.patient.name} · ` +
+      `pack <b>${loaded.patientId}</b> · ${escapeText(pack.patient.name)} · ` +
         `state <b>${state.current}</b> · room <b>${currentRoom ?? '—'}</b> · ` +
         `t <b>${(state.elapsed() / 1000).toFixed(1)}s</b>` +
         (levelIndex >= 0 ? ` · level <b>${levelIndex + 1}/${levels.length}</b>` : '') +
@@ -861,5 +898,5 @@ function describe(event: Event): string {
 boot().catch((err) => {
   console.error(err)
   document.getElementById('app')!.innerHTML =
-    `<pre style="color:#f88;padding:20px;font:13px ui-monospace,monospace">${String(err)}</pre>`
+    `<pre style="color:#f88;padding:20px;font:13px ui-monospace,monospace">${escapeText(String(err))}</pre>`
 })

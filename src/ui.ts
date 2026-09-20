@@ -1,3 +1,4 @@
+export const escapeText = (text: string): string => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
 /**
  * SPEC.md §3 — HUD, hints, answer cards, loader, summary.
  *
@@ -73,6 +74,9 @@ export interface LevelChoice {
  * session should be able to open the one they want.
  */
 export interface LevelSelectView {
+  onPersonalise?: () => void
+  personalisationLabel?: string
+  storageWarning?: string
   title: string
   subtitle: string
   levels: LevelChoice[]
@@ -113,6 +117,7 @@ export interface RenderedProblem {
 }
 
 export interface AnswerCardOptions {
+  memory?: { photo?: string; caption: string }
   question: string
   choices: ChoiceCard[]
   /** Set once level-3 guidance has revealed the answer (§5.4). Never marks anything wrong. */
@@ -446,8 +451,8 @@ export class UI {
     this.overlayCard.classList.remove('wide', 'summary')
     this.overlayCard.classList.add('levels')
     this.overlayCard.innerHTML =
-      `<h1>${view.title}</h1>` +
-      `<p>${view.subtitle}</p>` +
+      `<h1>${escapeText(view.title)}</h1>` +
+      `<p>${escapeText(view.subtitle)}</p>` +
       `<div class="levelList">${view.levels
         .map(
           (level, i) =>
@@ -455,16 +460,26 @@ export class UI {
             `<span class="ord">${level.ordinal}` +
             (level.finished ? ` <span class="done">· finished</span>` : '') +
             `</span>` +
-            `<span class="name">${level.title}</span>` +
-            (level.description ? `<span class="desc">${level.description}</span>` : '') +
+            `<span class="name">${escapeText(level.title)}</span>` +
+            (level.description ? `<span class="desc">${escapeText(level.description)}</span>` : '') +
             `<span class="shape">${level.shape}</span>` +
             `</span>` +
             `<button data-level="${i}">${level.finished ? 'Play again' : 'Start'}</button></div>`
         )
         .join('')}</div>` +
-      (view.demoNotice ? `<div class="demo">${view.demoNotice}</div>` : '') +
+      (view.demoNotice ? `<div class="demo">${escapeText(view.demoNotice)}</div>` : '') +
       (view.keys ? `<div class="keys">${view.keys}</div>` : '')
 
+    if (view.onPersonalise) {
+      const button = document.createElement('button')
+      button.textContent = view.personalisationLabel ?? 'Personalise Home'
+      button.onclick = e => { e.stopPropagation(); view.onPersonalise?.() }
+      this.overlayCard.append(button)
+    }
+    if (view.storageWarning) {
+      const warning = document.createElement('p'); warning.setAttribute('role', 'alert')
+      warning.textContent = view.storageWarning; this.overlayCard.append(warning)
+    }
     for (const button of this.overlayCard.querySelectorAll<HTMLButtonElement>('button[data-level]')) {
       button.addEventListener('click', (e) => {
         e.stopPropagation()
@@ -494,8 +509,8 @@ export class UI {
       value === null ? '—' : `${(value / 1000).toFixed(1)}s`
 
     this.overlayCard.innerHTML =
-      `<h1>${view.title}</h1>` +
-      `<p>${view.subtitle}</p>` +
+      `<h1>${escapeText(view.title)}</h1>` +
+      `<p>${escapeText(view.subtitle)}</p>` +
       `<div class="outcomeGrid">${view.outcomes
         .map((o) => `<div><b>${o.count}</b><span>${o.label}</span></div>`)
         .join('')}</div>` +
@@ -602,8 +617,8 @@ export class UI {
    */
   showInstruction(levelLabel: string, stepLabel: string, instruction: string): void {
     this.instructionEl.innerHTML =
-      `<span class="level">${levelLabel}</span>` +
-      `<span class="step">${stepLabel}</span>${instruction}`
+      `<span class="level">${escapeText(levelLabel)}</span>` +
+      `<span class="step">${escapeText(stepLabel)}</span>${escapeText(instruction)}`
     this.missionEl.hidden = false
   }
 
@@ -634,6 +649,7 @@ export class UI {
    * what `expectingUnlock` exists to keep from being read as a pause.
    */
   showAnswerCard(options: AnswerCardOptions): void {
+    this.photoFailed = false
     this.card = options
     this.missionEl.hidden = true
     this.answerEl.hidden = false
@@ -656,6 +672,8 @@ export class UI {
     return !this.answerEl.hidden
   }
 
+  private photoFailed = false
+
   private renderCard(): void {
     const card = this.card
     if (!card) return
@@ -665,28 +683,32 @@ export class UI {
     // §4.2's no-mixing rule, enforced where the markup is written rather than trusted
     // from the caller: photos appear only if *every* choice on screen has one. A single
     // text card among photographs would point straight at the answer.
-    const photos = card.choices.every((c) => !!c.photoUrl)
+    const photos = !this.photoFailed && card.choices.every((c) => !!c.photoUrl)
 
     sheet.innerHTML =
-      `<h2>${card.question}</h2>` +
+      `<h2>${escapeText(card.question)}</h2>` +
+      (card.memory ? `<figure>${card.memory.photo && !this.photoFailed ? `<img class="memory-photo" src="${escapeText(card.memory.photo)}" alt="Caregiver-selected memory" style="max-width:240px;max-height:160px;object-fit:contain">` : ''}<figcaption>${escapeText(card.memory.caption)}</figcaption></figure>` : '') +
       `<div class="choices">${card.choices
         .map(
           (c) =>
             `<button class="choice${photos ? ' photo' : ''}${c.id === revealed ? ' revealed' : ''}"` +
             ` data-id="${c.id}">` +
             (photos ? `<img class="portrait" src="${c.photoUrl}" alt="" draggable="false">` : '') +
-            `<span class="name">${c.name}</span>` +
-            (c.relationship ? `<span class="rel">${c.relationship}</span>` : '') +
+            `<span class="name">${escapeText(c.name)}</span>` +
+            (c.relationship ? `<span class="rel">${escapeText(c.relationship)}</span>` : '') +
             (c.hasVoice ? `<span class="voice">Tap to hear them</span>` : '') +
             `<span class="tag">The answer</span></button>`
         )
         .join('')}</div>` +
-      `<p class="note">${this.hintText ?? card.note ?? ''}</p>` +
+      `<p class="note">${escapeText(this.hintText ?? card.note ?? '')}</p>` +
       `<div class="actions">` +
       (revealed && card.onContinue ? `<button class="primary" data-act="continue">Continue</button>` : '') +
       `<button data-act="skip">Skip this step</button>` +
       `</div>`
 
+    for (const img of sheet.querySelectorAll<HTMLImageElement>('img.portrait, img.memory-photo')) {
+      img.onerror = () => { if (this.card === card) { this.photoFailed = true; this.renderCard() } }
+    }
     for (const el of sheet.querySelectorAll<HTMLButtonElement>('button.choice')) {
       el.addEventListener('click', () => card.onSelect(el.dataset.id!))
     }

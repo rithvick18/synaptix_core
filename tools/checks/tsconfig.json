@@ -4,5 +4,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["./*.ts", "../../src"]
+  "include": ["./*.ts", "../profile-browser.check.ts", "../../src"]
 }

@@ -1081,6 +1081,13 @@ export async function createProceduralHouse(
   interactables['wall-photo'] = livingRoomWall
   hintTargets['wall-photo'] = livingRoomWall
 
+  const eventFrame = buildFrameAnchor(0.95, 0.7, mats)
+  eventFrame.position.copy(livingRoomWall.position)
+  eventFrame.position.z += 1.2
+  eventFrame.rotation.copy(livingRoomWall.rotation)
+  eventFrame.name = 'anchor:eventFrame'
+  root.add(eventFrame)
+
   const bedsideFrame = buildFrameAnchor(0.2, 0.26, mats)
   bedsideFrame.position.set(BEDSIDE_FRAME_ANCHOR[0], BEDSIDE_FRAME_ANCHOR[1] + 0.17, BEDSIDE_FRAME_ANCHOR[2])
   bedsideFrame.rotation.y = BEDSIDE_FRAME_YAW
@@ -1163,7 +1170,7 @@ export async function createProceduralHouse(
     root,
     blockers,
     triggers,
-    anchors: { livingRoomWall, bedsideFrame, audioSource },
+    anchors: { livingRoomWall, bedsideFrame, eventFrame, audioSource },
     interactables,
     hintTargets,
     spawn: { position: spawnPos, yaw },

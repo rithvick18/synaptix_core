@@ -103,7 +103,7 @@ export class Interaction {
   private applyHighlight(object: THREE.Object3D): void {
     object.traverse((node) => {
       const mesh = node as THREE.Mesh
-      if (!mesh.isMesh) return
+      if (!mesh.isMesh || mesh.name === 'anchor-plate') return // Highlight the frame, keeping the photograph colour-accurate.
       const original = mesh.material
       const list = Array.isArray(original) ? original : [original]
       const clones = list.map((m) => {
