@@ -1,29 +1,35 @@
 /**
- * §10.6 — local inference. The only provider implementation: a `llama-server` from
- * llama.cpp, running a 4-bit quantised ~4B vision model on the caregiver's own machine,
- * reached over the loopback interface via its OpenAI-compatible endpoint.
+ * §10.9 — a second provider adapter: a local model served by `llama-server`
+ * (llama.cpp), reached over loopback and speaking llama.cpp's OpenAI-compatible
+ * `/v1/chat/completions` endpoint.
  *
- * Two properties are worth stating because they are enforced here rather than promised
- * elsewhere:
+ * Why this exists alongside the hosted adapter. §10.6's privacy posture is written around
+ * "only the probe derivative ever leaves the machine." With a local runtime bound to
+ * 127.0.0.1 nothing leaves the machine at all — the probe crosses a loopback socket to
+ * another process on the same computer and no further. That is a materially stronger
+ * promise for a caregiver uploading photographs of a person with dementia, and it is the
+ * reason `consentPromptFor()` in `config.ts` tells them something different in this mode
+ * rather than reciting the hosted copy.
  *
- * 1. **Nothing leaves the machine.** `baseUrl` is rejected unless it resolves to
- *    loopback, so a mistyped or hand-edited config cannot turn this into an uploader.
- *    That makes §10.6's privacy claim structural, in the same way the canvas re-encode
- *    in `images.ts` makes the EXIF strip structural.
+ * The promise only holds while the endpoint really is loopback, so `isLoopbackEndpoint()`
+ * checks rather than assumes: point this adapter at a LAN or public host and the consent
+ * copy reverts to "leaves this machine."
  *
- * 2. **Malformed tool calls are impossible, not merely unlikely.** A 4B model prompted
- *    to emit JSON will sometimes emit prose instead, and Gemma-class templates have no
- *    native tool-call support to lean on. So this adapter does not ask for tool calls —
- *    it constrains them. `AGENT_TOOL_SCHEMA` is compiled into a JSON schema that
- *    llama.cpp converts to a GBNF grammar and enforces during sampling. The model
- *    physically cannot produce a token sequence outside the schema, which is a stronger
- *    guarantee than a hosted function-calling API gives.
+ * Model expectations. The image pipeline (§10.5) hands this adapter a JPEG, and §10.4
+ * lets the model read visual properties off it, so the served model must be
+ * vision-capable — a text-only GGUF cannot do this job, however large. The default target
+ * is Qwen2.5-VL-3B-Instruct at Q4_K_M with its mmproj projector: ~2.2 GB of weights,
+ * comfortably under the 7B ceiling, and among the better small models at holding a
+ * structure. Any llama.cpp-served vision model can be substituted by config.
  *
- * The firewall (§10.3) still runs on everything that comes back. A well-formed proposal
- * is not a true one.
+ * Reliability at this size comes from `grammar.ts`, not from prompting: output is
+ * constrained at sampling time to a valid proposal array, so "the 3B model returned
+ * prose" is not a failure mode that can occur. What it *can* still do is propose things
+ * that are wrong — invented names, invented years — which is the firewall's job (§10.3)
+ * and is unchanged by which provider produced them.
  */
+import { buildProposalGrammar, parseProposalCalls } from './grammar'
 import type {
-  JsonSchemaToolList,
   ProbeImage,
   ProviderAdapter,
   ProviderFailureReason,
@@ -32,194 +38,163 @@ import type {
   ProviderToolCall
 } from './provider'
 
-export interface LlamaCppConfig {
-  /** Where `llama-server` listens. Must be loopback — see `assertLocal`. */
-  baseUrl?: string
-  /** Informational: llama-server serves whichever `.gguf` it was started with. */
+export interface LlamaCppProviderConfig {
+  /** Base URL of a running `llama-server`. Default is loopback; see the note above. */
+  endpoint?: string
+  /** Label sent as `model`. llama-server serves whichever GGUF it was started with, so
+   *  this is recorded for provenance (§10.8) more than it is a selector. */
   model?: string
   timeoutMs?: number
-  /** Caps `calls[]` in the grammar, so §10.9's `maxProposalsPerRun` is enforced by the
-   *  sampler rather than by trimming an over-long list afterwards. */
-  maxCalls?: number
-  /** Injected by the checks; production passes nothing and uses global `fetch`. */
+  temperature?: number
+  maxTokens?: number
+  /** Optional `--api-key` if the local server was started with one. */
+  apiKey?: string
+  /** Injected in tests so `npm run check` exercises every path without a live server. */
   fetch?: typeof fetch
 }
 
-const DEFAULT_BASE_URL = 'http://127.0.0.1:8080'
-/** Generous: a 4B with a vision projector spends real time on prompt processing for an
- *  image, and on CPU-only hardware a first call can legitimately take a minute. */
+export const DEFAULT_LLAMACPP_ENDPOINT = 'http://127.0.0.1:8080'
+export const DEFAULT_LLAMACPP_MODEL = 'qwen2.5-vl-3b-instruct-q4_k_m'
+/** A 3B Q4 model generating a few hundred tokens from an image on CPU is not fast. */
 const DEFAULT_TIMEOUT_MS = 120_000
-const DEFAULT_MAX_CALLS = 12
+const DEFAULT_MAX_TOKENS = 2048
+/** Low but not zero: greedy decoding under a grammar tends to repeat a single proposal. */
+const DEFAULT_TEMPERATURE = 0.2
 
-const START_COMMAND =
-  'llama-server -m gemma-3-4b-it-Q4_K_M.gguf --mmproj mmproj-gemma-3-4b-it-f16.gguf --port 8080'
-
-function isLoopback(raw: string): boolean {
+/**
+ * True when the endpoint resolves to this machine. Drives the consent copy (§10.6) and
+ * nothing else — this function decides what the caregiver is told, so it errs toward
+ * "not loopback" for anything it cannot parse or recognise.
+ */
+export function isLoopbackEndpoint(endpoint: string): boolean {
   let url: URL
   try {
-    url = new URL(raw)
+    url = new URL(endpoint)
   } catch {
     return false
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
-  const host = url.hostname.replace(/^\[|\]$/g, '')
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1'
-}
-
-/**
- * Compiles the tool schema into a single constrained-decoding schema: an envelope whose
- * `calls[]` items are a discriminated union over every tool, keyed by a `const` name.
- * llama.cpp turns this into a GBNF grammar, so `tool` is always a real tool and `args`
- * always matches that tool's own parameter schema.
- */
-function toolCallSchema(tools: JsonSchemaToolList, maxCalls: number): Record<string, unknown> {
-  return {
-    type: 'object',
-    properties: {
-      calls: {
-        type: 'array',
-        maxItems: maxCalls,
-        items: {
-          anyOf: tools.map((tool) => ({
-            type: 'object',
-            properties: { tool: { const: tool.name }, args: tool.parameters },
-            required: ['tool', 'args'],
-            additionalProperties: false
-          }))
-        }
-      }
-    },
-    required: ['calls'],
-    additionalProperties: false
-  }
-}
-
-/** The tool roster is described in the system prompt because the grammar constrains
- *  shape, not choice: the model still has to know what each tool is *for*. */
-function toolDirectory(tools: JsonSchemaToolList): string {
-  return tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')
-}
-
-function imageBlock(img: ProbeImage): Record<string, unknown> {
-  return { type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.base64}` } }
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (host === 'localhost' || host === '::1' || host === '0:0:0:0:0:0:0:1') return true
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  if (!ipv4) return false
+  const octets = ipv4.slice(1).map(Number)
+  if (octets.some((o) => Number.isNaN(o) || o > 255)) return false
+  return octets[0] === 127
 }
 
 function friendlyMessage(reason: ProviderFailureReason, detail: string): string {
   switch (reason) {
-    case 'not-configured':
-      return 'No local model is configured. Continue with manual authoring.'
-    case 'server-unreachable':
-      return `Could not reach the local model. Start it with:\n  ${START_COMMAND}\nOr continue with manual authoring.`
-    case 'model-not-loaded':
-      return `The local model server is running but cannot handle this request (${detail}). If the photographs are being ignored, it was likely started without --mmproj, which is what gives the model vision. Or continue with manual authoring.`
+    case 'network':
+      return 'Could not reach the local model server. Start llama-server, or continue writing this pack by hand.'
+    case 'model-unavailable':
+      return 'The local model server is running but has no model loaded to answer with. Continue writing this pack by hand.'
     case 'timeout':
-      return 'The local model took too long to answer. A smaller quantisation or fewer photographs at once will help. You can retry, or continue with manual authoring.'
-    case 'overloaded':
-      return 'The local model is still loading, or busy with another request. Wait a moment and retry, or continue with manual authoring.'
+      return 'The local model took too long to answer. You can retry, or continue writing this pack by hand.'
+    case 'bad-key':
+      return 'The local model server rejected the configured API key. Check it, or continue writing this pack by hand.'
+    case 'rate-limited':
+      return 'The local model server is busy with another request. Wait a moment, or continue writing this pack by hand.'
     case 'malformed-response':
-      return `The local model's response could not be understood (${detail}). Continue with manual authoring.`
-    case 'unknown':
+      return `The local model's answer could not be read (${detail}). Continue writing this pack by hand.`
     default:
-      return `Something went wrong talking to the local model (${detail}). Continue with manual authoring.`
+      return `Something went wrong talking to the local model (${detail}). Continue writing this pack by hand.`
   }
 }
 
-/** llama-server answers 503 while weights are still loading and while every slot is
- *  busy — both genuinely transient, unlike a server that is simply not running. */
 function isRetryable(reason: ProviderFailureReason): boolean {
-  return reason === 'timeout' || reason === 'overloaded'
+  return reason === 'timeout' || reason === 'network' || reason === 'rate-limited'
+}
+
+function classifyStatus(status: number): ProviderFailureReason {
+  if (status === 401 || status === 403) return 'bad-key'
+  if (status === 404 || status === 501 || status === 503) return 'model-unavailable'
+  if (status === 429) return 'rate-limited'
+  return 'unknown'
 }
 
 function classifyThrown(error: unknown): { reason: ProviderFailureReason; detail: string } {
-  if (error instanceof DOMException && error.name === 'AbortError') {
-    return { reason: 'timeout', detail: 'aborted' }
+  if (error instanceof Error) {
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+      return { reason: 'timeout', detail: error.message }
+    }
+    return { reason: 'network', detail: error.message }
   }
-  if (error instanceof Error && error.name === 'AbortError') {
-    return { reason: 'timeout', detail: 'aborted' }
-  }
-  // A refused connection surfaces as an opaque TypeError from fetch in both browsers
-  // and node; there is no richer signal to branch on.
-  if (error instanceof TypeError) {
-    return { reason: 'server-unreachable', detail: error.message }
-  }
-  if (error instanceof Error) return { reason: 'unknown', detail: error.message }
-  return { reason: 'unknown', detail: String(error) }
+  return { reason: 'network', detail: String(error) }
 }
 
-function classifyStatus(status: number, body: string): { reason: ProviderFailureReason; detail: string } {
-  if (status === 503) return { reason: 'overloaded', detail: 'server loading or all slots busy' }
-  if (status === 501) return { reason: 'model-not-loaded', detail: 'endpoint not implemented by this server' }
-  if (status === 404) return { reason: 'model-not-loaded', detail: 'no /v1/chat/completions on this server' }
-  if (status === 400 && /image|mmproj|multimodal|vision|projector/i.test(body)) {
-    return { reason: 'model-not-loaded', detail: 'server rejected the image input' }
+/** Only the probe derivative is ever encoded into a message (§10.5 rule 4). The type
+ *  makes the wrong thing unrepresentable; this function is where it becomes bytes. */
+function imageContent(image: ProbeImage): Record<string, unknown> {
+  return {
+    type: 'image_url',
+    image_url: { url: `data:${image.mimeType};base64,${image.base64}` }
   }
-  return { reason: 'unknown', detail: `HTTP ${status}` }
-}
-
-function parseToolCalls(text: string): ProviderToolCall[] | { error: string } {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return { error: 'not JSON' }
-  }
-  if (typeof parsed !== 'object' || parsed === null) return { error: 'not an object' }
-  const calls = (parsed as { calls?: unknown }).calls
-  if (!Array.isArray(calls)) return { error: 'no calls array' }
-
-  const out: ProviderToolCall[] = []
-  for (const call of calls) {
-    if (typeof call !== 'object' || call === null) return { error: 'a call was not an object' }
-    const { tool, args } = call as { tool?: unknown; args?: unknown }
-    if (typeof tool !== 'string') return { error: 'a call had no tool name' }
-    out.push({ tool, args: args ?? {} })
-  }
-  return out
 }
 
 export class LlamaCppProviderAdapter implements ProviderAdapter {
-  constructor(private readonly config: LlamaCppConfig = {}) {}
+  constructor(private readonly config: LlamaCppProviderConfig = {}) {}
+
+  private get endpoint(): string {
+    return (this.config.endpoint ?? DEFAULT_LLAMACPP_ENDPOINT).replace(/\/+$/, '')
+  }
+
+  private get doFetch(): typeof fetch {
+    return this.config.fetch ?? globalThis.fetch
+  }
+
+  /**
+   * Asks the server whether it is up before a run, so the screen can say "start
+   * llama-server" before a caregiver uploads twenty photographs and waits. Never throws.
+   */
+  async health(): Promise<{ ok: boolean; message: string }> {
+    try {
+      const response = await this.doFetch(`${this.endpoint}/health`, { method: 'GET' })
+      if (response.ok) return { ok: true, message: 'The local model server is ready.' }
+      const reason = classifyStatus(response.status)
+      return { ok: false, message: friendlyMessage(reason, `HTTP ${response.status}`) }
+    } catch (error) {
+      const { reason, detail } = classifyThrown(error)
+      return { ok: false, message: friendlyMessage(reason, detail) }
+    }
+  }
 
   async run(request: ProviderRequest): Promise<ProviderResult> {
-    const baseUrl = this.config.baseUrl ?? DEFAULT_BASE_URL
-    if (!isLoopback(baseUrl)) {
-      return {
-        ok: false,
-        reason: 'not-configured',
-        message: `Refusing to send caregiver photographs to ${baseUrl}: inference must stay on this machine. Point the agent at a local llama-server, or continue with manual authoring.`
-      }
-    }
-
-    const doFetch = this.config.fetch ?? fetch
-    const timeoutMs = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    const maxCalls = this.config.maxCalls ?? DEFAULT_MAX_CALLS
+    const grammar = buildProposalGrammar(request.tools)
+    const model = this.config.model ?? DEFAULT_LLAMACPP_MODEL
 
     const body = {
-      model: this.config.model ?? 'local',
-      temperature: 0,
-      max_tokens: 2048,
-      cache_prompt: true,
+      model,
       messages: [
-        { role: 'system', content: `${request.systemPrompt}\n\nTools available:\n${toolDirectory(request.tools)}` },
+        { role: 'system', content: request.systemPrompt },
         {
           role: 'user',
-          content: [...request.probeImages.map(imageBlock), { type: 'text', text: request.caregiverText }]
+          content: [
+            { type: 'text', text: request.caregiverText },
+            ...request.probeImages.map(imageContent)
+          ]
         }
       ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: 'agent_tool_calls', strict: true, schema: toolCallSchema(request.tools, maxCalls) }
-      }
+      temperature: this.config.temperature ?? DEFAULT_TEMPERATURE,
+      max_tokens: this.config.maxTokens ?? DEFAULT_MAX_TOKENS,
+      // llama.cpp's own extension to the OpenAI shape. A server that ignores it still
+      // returns something; `parseProposalCalls` then reports malformed-response rather
+      // than letting unconstrained text through as if it were proposals.
+      grammar,
+      cache_prompt: true,
+      stream: false
     }
 
     const attempt = async (): Promise<ProviderResult> => {
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       let response: Response
       try {
-        response = await doFetch(`${baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
+        response = await this.doFetch(`${this.endpoint}/v1/chat/completions`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {})
+          },
           body: JSON.stringify(body),
           signal: controller.signal
         })
@@ -228,54 +203,79 @@ export class LlamaCppProviderAdapter implements ProviderAdapter {
       }
 
       if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        const { reason, detail } = classifyStatus(response.status, text)
-        return { ok: false, reason, message: friendlyMessage(reason, detail) }
+        const reason = classifyStatus(response.status)
+        return { ok: false, reason, message: friendlyMessage(reason, `HTTP ${response.status}`) }
       }
 
-      let payload: { choices?: { message?: { content?: unknown } }[]; model?: unknown }
+      let payload: unknown
       try {
         payload = await response.json()
       } catch {
-        return { ok: false, reason: 'malformed-response', message: friendlyMessage('malformed-response', 'response was not JSON') }
+        return { ok: false, reason: 'malformed-response', message: friendlyMessage('malformed-response', 'it was not JSON') }
       }
 
-      const content = payload.choices?.[0]?.message?.content
-      if (typeof content !== 'string') {
-        return { ok: false, reason: 'malformed-response', message: friendlyMessage('malformed-response', 'no message content') }
+      const content = readMessageContent(payload)
+      if (content === null) {
+        return {
+          ok: false,
+          reason: 'malformed-response',
+          message: friendlyMessage('malformed-response', 'no message content in the response')
+        }
       }
 
-      const calls = parseToolCalls(content)
-      if (!Array.isArray(calls)) {
-        return { ok: false, reason: 'malformed-response', message: friendlyMessage('malformed-response', calls.error) }
+      const calls = parseProposalCalls(content, request.tools)
+      if (calls === null) {
+        return {
+          ok: false,
+          reason: 'malformed-response',
+          message: friendlyMessage('malformed-response', 'the answer was not a list of proposals')
+        }
       }
 
-      return { ok: true, toolCalls: calls, model: typeof payload.model === 'string' ? payload.model : (this.config.model ?? 'local') }
+      const toolCalls: ProviderToolCall[] = calls.map((c) => ({ tool: c.tool, args: c.args }))
+      return { ok: true, toolCalls, model: readModelName(payload) ?? model }
     }
 
-    // Retry is driven by the *result*, not only by thrown errors: llama-server signals
-    // the most retryable condition there is — still loading its weights — as a 503
-    // response, which never reaches a catch block.
-    const attemptSafely = async (): Promise<ProviderResult> => {
+    try {
+      return await attempt()
+    } catch (firstError) {
+      const first = classifyThrown(firstError)
+      if (!isRetryable(first.reason)) {
+        return { ok: false, reason: first.reason, message: friendlyMessage(first.reason, first.detail) }
+      }
       try {
         return await attempt()
-      } catch (error) {
-        const { reason, detail } = classifyThrown(error)
-        return { ok: false, reason, message: friendlyMessage(reason, detail) }
+      } catch (secondError) {
+        const second = classifyThrown(secondError)
+        return { ok: false, reason: second.reason, message: friendlyMessage(second.reason, second.detail) }
       }
     }
-
-    const first = await attemptSafely()
-    if (first.ok || !isRetryable(first.reason)) return first
-    return attemptSafely()
   }
 }
 
-/** Reads local-dev config from Vite's `import.meta.env` (`.env`, git-ignored). There is
- *  no key to read — only where the server is and which `.gguf` it was told to serve. */
-export function llamaCppConfigFromEnv(env: Record<string, string | undefined>): LlamaCppConfig {
+function readMessageContent(payload: unknown): string | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const choices = (payload as Record<string, unknown>).choices
+  if (!Array.isArray(choices) || choices.length === 0) return null
+  const first = choices[0]
+  if (typeof first !== 'object' || first === null) return null
+  const message = (first as Record<string, unknown>).message
+  if (typeof message !== 'object' || message === null) return null
+  const content = (message as Record<string, unknown>).content
+  return typeof content === 'string' ? content : null
+}
+
+function readModelName(payload: unknown): string | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const model = (payload as Record<string, unknown>).model
+  return typeof model === 'string' && model.length > 0 ? model : null
+}
+
+/** Local-dev-only config, read from Vite's `import.meta.env` (`.env`, git-ignored). */
+export function llamaCppConfigFromEnv(env: Record<string, string | undefined>): LlamaCppProviderConfig {
   return {
-    baseUrl: env.VITE_AGENT_BASE_URL,
-    model: env.VITE_AGENT_MODEL
+    endpoint: env.VITE_AGENT_LLAMACPP_ENDPOINT,
+    model: env.VITE_AGENT_LLAMACPP_MODEL,
+    apiKey: env.VITE_AGENT_LLAMACPP_API_KEY
   }
 }

@@ -35,16 +35,6 @@ export class AuditLog {
   }
 }
 
-/**
- * A JSONL file sink for local dev tooling (never imported by `main.ts`, so it never
- * reaches the browser bundle). Uses `node:fs`, which is why this function — and only
- * this function — is Node-only.
- */
-export async function nodeJsonlFileSink(path: string): Promise<AuditSink> {
-  const fs = await import('node:fs')
-  return {
-    write(line: string) {
-      fs.appendFileSync(path, `${line}\n`, 'utf8')
-    }
-  }
-}
+// The JSONL file sink lives in `auditNode.ts`. It needs `node:fs`, and this module is
+// now reachable from the browser bundle (the setup screen records to it), so keeping the
+// two apart is what stops a Node-only import from being pulled into a browser chunk.

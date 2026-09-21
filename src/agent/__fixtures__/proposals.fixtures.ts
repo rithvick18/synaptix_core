@@ -183,6 +183,32 @@ export const PROPOSAL_FIXTURES: ProposalFixture[] = [
     expectRules: ['F-a']
   },
   {
+    // A name field is entirely a proper noun, so the sentence-initial exemption that
+    // keeps "Please go to the kitchen." from reporting "Please" must not apply to it.
+    // A bare invented first name is the single most likely thing a small local model
+    // produces, and it has to be caught.
+    name: 'F-a: person.name is a bare invented first name',
+    proposal: propose_person({
+      name: 'Devika',
+      relationship: 'granddaughter',
+      photoAssetId: 'photo-living'
+    }),
+    context: baseContext(),
+    expectOk: false,
+    expectRules: ['F-a']
+  },
+  {
+    name: 'F-a: person.name that the caregiver did supply is allowed',
+    proposal: propose_person({
+      name: 'Ananya',
+      relationship: 'granddaughter',
+      photoAssetId: 'photo-living'
+    }),
+    context: baseContext(),
+    expectOk: true,
+    expectRules: []
+  },
+  {
     name: 'F-a: navigate instruction names an unmentioned person',
     proposal: propose_navigate_step({
       targetRoom: 'kitchen',

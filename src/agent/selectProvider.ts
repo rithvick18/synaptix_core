@@ -3,14 +3,9 @@
  * tests. This is the one place that decides, from `AgentConfig.provider`, which
  * `ProviderAdapter` a run actually talks to — every caller downstream only ever sees the
  * `ProviderAdapter` interface, real or stub.
- *
- * `provider` is derived from the setup mode chosen at start (`config.ts`): offline
- * selects `llama-cpp`, online selects `gemini`. Nothing else in the app branches on the
- * mode, which is why switching it is one write to one field.
  */
-import type { ProviderAdapter, ProviderRequest, ProviderResult } from './provider'
-import { LlamaCppProviderAdapter, type LlamaCppConfig } from './llamaCpp'
-import { GeminiProviderAdapter, DEFAULT_GEMINI_MODEL, type GeminiConfig } from './gemini'
+import type { ProviderAdapter, ProviderRequest, ProviderResult, AnthropicProviderConfig } from './provider'
+import { LlamaCppProviderAdapter, type LlamaCppProviderConfig } from './llamaCpp'
 import { StubModel, type StubModelScript } from './stubModel'
 import type { AgentConfig } from './config'
 
@@ -30,17 +25,35 @@ export class StubProviderAdapter implements ProviderAdapter {
   }
 }
 
+/**
+ * Defers loading the hosted SDK until a hosted call is actually made.
+ *
+ * `provider.ts` has a hard dependency on `@anthropic-ai/sdk`, which is roughly twenty
+ * times the size of everything else in this layer. Importing it eagerly would mean a
+ * caregiver running a 3 GB model on their own machine still downloads a hosted provider's
+ * client library to sit unused — so the import happens inside `run()`, on the one path
+ * that needs it.
+ */
+class LazyAnthropicAdapter implements ProviderAdapter {
+  constructor(private readonly config: AnthropicProviderConfig) {}
+
+  async run(request: ProviderRequest): Promise<ProviderResult> {
+    const { AnthropicProviderAdapter } = await import('./provider')
+    return new AnthropicProviderAdapter(this.config).run(request)
+  }
+}
+
 /** `provider: 'none'` — no provider configured at all. Distinct from a real provider
  *  missing its key: this is the config saying "don't try." */
 export class NullProviderAdapter implements ProviderAdapter {
   async run(): Promise<ProviderResult> {
-    return { ok: false, reason: 'not-configured', message: 'No model is configured. Continue with manual authoring.' }
+    return { ok: false, reason: 'no-key', message: 'No provider is configured. Continue with manual authoring.' }
   }
 }
 
 export interface SelectProviderOptions {
-  llamaCpp?: LlamaCppConfig
-  gemini?: GeminiConfig
+  anthropic?: AnthropicProviderConfig
+  llamacpp?: LlamaCppProviderConfig
   stubScript?: StubModelScript
 }
 
@@ -48,20 +61,17 @@ const EMPTY_STUB_SCRIPT: StubModelScript = { name: 'empty', calls: [] }
 
 export function selectProvider(config: AgentConfig, options: SelectProviderOptions = {}): ProviderAdapter {
   switch (config.provider) {
-    case 'llama-cpp':
-      return new LlamaCppProviderAdapter({ model: config.model, maxCalls: config.maxProposalsPerRun, ...options.llamaCpp })
-    case 'gemini': {
-      // The stored config wins over `.env` for the two fields a caregiver can actually
-      // set, because `.env` is a developer's convenience and the setup screen is not.
-      // Spreading first would let an absent env var overwrite a key typed in the browser.
-      const env = options.gemini ?? {}
-      return new GeminiProviderAdapter({
-        ...env,
-        apiKey: config.apiKey || env.apiKey,
-        model: config.model || env.model || DEFAULT_GEMINI_MODEL,
-        maxCalls: config.maxProposalsPerRun
+    case 'anthropic':
+      return new LazyAnthropicAdapter({ model: config.model, ...options.anthropic })
+    case 'llamacpp':
+      // `config` supplies what the caregiver chose; `options` supplies what only the
+      // host knows (an injected fetch in tests). Options win so a check can never
+      // accidentally reach a real socket.
+      return new LlamaCppProviderAdapter({
+        model: config.model || undefined,
+        endpoint: config.endpoint || undefined,
+        ...options.llamacpp
       })
-    }
     case 'stub':
       return new StubProviderAdapter(options.stubScript ?? EMPTY_STUB_SCRIPT)
     case 'none':

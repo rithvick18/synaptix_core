@@ -88,9 +88,18 @@ function checkTokensAgainstAllowlist(
   field: string,
   text: string,
   ctx: FirewallContext,
-  violations: Violation[]
+  violations: Violation[],
+  /**
+   * Set for fields whose entire value is a proper noun — a person's name. The
+   * sentence-initial exemption below exists so that "Please go to the kitchen." does not
+   * report "Please"; in a name field there is no sentence, and position one is exactly
+   * where an invented name lands. Without this, a model proposing a bare `"Devika"`
+   * passes F-a because the only word present is also the first one — which is precisely
+   * the failure a small local model produces most often.
+   */
+  treatWholeFieldAsProperNoun = false
 ): void {
-  const sentenceStarts = sentenceInitialWords(text)
+  const sentenceStarts = treatWholeFieldAsProperNoun ? new Set<string>() : sentenceInitialWords(text)
   const words = text.match(/[\p{L}][\p{L}\p{N}']*/gu) ?? []
 
   // F-a: capitalised words / proper nouns not in allowedTokens.
@@ -292,7 +301,9 @@ export function validateProposal(p: Proposal, ctx: FirewallContext): FirewallRes
     }
 
     case 'person': {
-      checkTokensAgainstAllowlist('person.name', p.name, ctx, violations)
+      checkTokensAgainstAllowlist('person.name', p.name, ctx, violations, true)
+      // `relationship` is a common noun — "granddaughter", "neighbour" — so it keeps the
+      // ordinary sentence handling; capitalising it is a typo, not a claimed fact.
       checkTokensAgainstAllowlist('person.relationship', p.relationship, ctx, violations)
       break
     }
