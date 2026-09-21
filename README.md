@@ -182,3 +182,36 @@ verification without pointer lock, plus `summary()`, `exportJson()` and `debug`:
 
 Not yet deployed — no Vercel or Netlify credentials are available in this environment.
 See `DEPLOY.md` for the exact commands.
+
+## Agent-assisted caregiver setup — Checkpoint F (SPEC.md §10)
+
+An optional, setup-time authoring assistant that turns a caregiver's uploads and typed
+notes into proposed pack content, which a caregiver must review and commit by hand before
+anything reaches a patient session. **No model call ever occurs while a patient session is
+running** — the agent is inert during play, full stop.
+
+**Checkpoint F1 (this repository, so far) ships the tool layer and the firewall only.**
+There is no provider wired, no network call, no UI, and `agent.enabled` is not even
+present as a runtime toggle yet — none of this is reachable from the app:
+
+- `src/agent/tools.ts` — the §10.2 read and proposal tool contracts, typed, plus the
+  JSON schema a model's function-calling API would be given. `commitProposal` and
+  `rejectProposal` are UI-only and are absent from that schema on purpose: a model cannot
+  reach them, directly or indirectly.
+- `src/agent/tokens.ts` — builds the caregiver-only token allow-list a proposal's text is
+  checked against. Nothing derived from an image contributes a token.
+- `src/agent/firewall.ts` — `validateProposal()`, the §10.3 content firewall (rules F-a
+  through F-i). A pure, synchronous function with no side effects and no model in the
+  loop, run against every proposal.
+- `src/agent/stubModel.ts` — a fake model that replays a scripted sequence of tool calls
+  from a fixture, so the whole propose → firewall pipeline is testable with zero network
+  access and no provider configured.
+- `src/agent/__fixtures__/` — 27 fixtures covering every firewall rule plus a
+  prompt-injection case, run in `npm run check`.
+
+Building the firewall before any provider is wired means the safety property — that the
+agent cannot smuggle an invented fact past the caregiver — is testable without spending a
+token, and the expensive path is never the thing being debugged.
+
+Later checkpoints (F2–F4, not yet built) add a real provider call and the image pipeline,
+the caregiver review UI, and provenance reporting in the pack and session export.
