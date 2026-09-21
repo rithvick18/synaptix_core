@@ -6,9 +6,12 @@
  * Every failure path is a typed result rather than a throw, so a caller always has a
  * clear message and a fallback to manual authoring (§10.9): "never a blocked UI."
  *
- * Inference is local (§10.6): `llamaCpp.ts` is the only implementation, and it talks to
- * a `llama-server` on the loopback interface. There is no hosted-provider adapter and no
- * API key anywhere in this module graph.
+ * There are two implementations, chosen by the setup mode (`config.ts`):
+ * `llamaCpp.ts` for offline mode, talking to a `llama-server` on the loopback
+ * interface, and `gemini.ts` for online mode, talking to Google's Gemini API. Each one
+ * enforces its own destination before it opens a socket — loopback-only and
+ * `generativelanguage.googleapis.com`-only respectively — so neither can be pointed
+ * somewhere else by a hand-edited config.
  */
 
 export interface ProbeImage {
@@ -32,9 +35,12 @@ export interface ProviderToolCall {
 }
 
 /**
- * Local-inference failure modes. There is deliberately no `no-key` or `bad-key` here:
- * nothing authenticates, because nothing leaves the machine. What replaces them is the
- * one thing that actually goes wrong locally — the model server not being up.
+ * Failure modes across both setup modes. The first group is what goes wrong locally —
+ * chiefly the model server not being up — and the second is what only a hosted API can
+ * do to you: reject your credential, meter you, or decline to answer. Offline mode can
+ * never produce the second group, which is the point: `no-key`, `bad-key` and
+ * `rate-limited` are unreachable when nothing authenticates and nothing leaves the
+ * machine.
  */
 export type ProviderFailureReason =
   | 'not-configured'
@@ -43,6 +49,10 @@ export type ProviderFailureReason =
   | 'timeout'
   | 'overloaded'
   | 'malformed-response'
+  | 'no-key'
+  | 'bad-key'
+  | 'rate-limited'
+  | 'blocked'
   | 'unknown'
 
 export interface ProviderSuccess {

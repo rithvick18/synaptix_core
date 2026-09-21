@@ -15,7 +15,7 @@ export function openProfileEditor(saved: LocalProfile | undefined, maxTextureSiz
   #profile-editor section{border:1px solid #c6cdbd;border-radius:10px;padding:15px;margin:12px 0;background:#fffdf7}
   #profile-editor canvas{display:block;max-width:100%;background:#d5d2c8;border:8px solid #665341;box-sizing:content-box}
   #profile-editor .error{white-space:pre-line;color:#8d2919;font-weight:600} #profile-editor small{display:block} #profile-editor footer{position:sticky;bottom:-26px;background:#faf6ee;padding:12px 0;border-top:1px solid #c6cdbd} </style>
-  <h2>Personalise Home</h2><p>Your profiles and original photographs stay in this browser on this device. Room references are processed locally only when you choose Generate. Clearing browser data removes them.</p>
+  <h2>Personalise Home</h2><p>Your profiles and original photographs stay in this browser on this device; clearing browser data removes them. Room reference photographs are read only when you choose Generate, by whichever model your setup mode selected — the panel below says which, and where the copies go.</p>
   <div data-main></div><p class="error" role="alert" aria-live="polite"></p><footer></footer>`
   document.body.append(dialog)
   let busy = false

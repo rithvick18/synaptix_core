@@ -16,6 +16,7 @@ import {
 } from './MemoryPack'
 import { MissionRunner, stopSpeaking, type Mission } from './Missions'
 import { Player } from './Player'
+import { AdaptiveResolution, detectQuality, pixelRatioLadder, qualityOverrideFromLocation, type QualityProfile } from './Quality'
 import { Renderer } from './Renderer'
 import { State } from './State'
 import {
@@ -30,6 +31,8 @@ import {
   type Event
 } from './Telemetry'
 import { UI, escapeText, type LoadStage } from './ui'
+import { agentConfigStore, needsSetup, type AgentConfig } from './agent/config'
+import { describeSetup, openSetupScreen } from './agent/setupModeUI'
 import { assertWorldContract } from './World'
 import { createProceduralHouse } from './proceduralHouse'
 
@@ -64,6 +67,10 @@ interface PerfResult {
   programs: number
   resolution: string
   pixelRatio: number
+  /** §7 asks for the settings a figure belongs to; these are the ones that can vary. */
+  tier: QualityProfile['tier']
+  anisotropy: number
+  textureResolution: string
   userAgent: string
 }
 
@@ -142,12 +149,51 @@ async function boot(): Promise<void> {
 
   ui.showLoadingStages('Starting…', stages)
 
+  /**
+   * §10.9 F4 — the setup screen, at start. Where the model that reads room photographs
+   * runs (offline llama.cpp / online Gemini) is asked once, over the loading screen.
+   *
+   * It is opened rather than awaited on purpose. Nothing about playing a level needs an
+   * answer, and a boot that could sit forever behind a dialog would be a boot that the
+   * offline check — and a caregiver who only wants to press Start — cannot get past.
+   */
+  let agentConfig: AgentConfig = agentConfigStore.load()
+  const env = (import.meta as ImportMeta & { env: Record<string, string | undefined> }).env
+  // Assigned once the level screen exists. Null until then, so a mode chosen while the
+  // house is still loading records itself without reaching for a screen that is not up.
+  let relabelSetupButton: (() => void) | null = null
+  const openSetup = (onClose?: () => void): void => {
+    openSetupScreen({
+      config: agentConfig,
+      envApiKey: env.VITE_GEMINI_API_KEY,
+      onSave: (next) => {
+        agentConfig = next
+        agentConfigStore.save(next)
+        relabelSetupButton?.()
+      },
+      onClose
+    })
+  }
+  if (needsSetup(agentConfig)) openSetup()
+
   const renderer = new Renderer(app)
   const state = new State()
 
+  /**
+   * §1.1 / §7 — what this machine can afford. Read once, before the first download, so
+   * the house is fetched at the right size rather than fetched and then corrected.
+   * Every tier boots at 1k; the tier decides anisotropy, whether a 2k upgrade is fetched
+   * afterwards, and how far the pixel-ratio ladder may climb.
+   */
+  const quality = detectQuality(renderer.deviceInfo(), qualityOverrideFromLocation(location.search))
+  console.log('[smriti] quality', quality)
+
   // Both downloads are optional by contract (§1.1); neither can fail the boot.
-  const [{ world, report }, envReport] = await Promise.all([
-    createProceduralHouse(progress, activeProfile?.environment),
+  const [{ world, report, upgradeTextures }, envReport] = await Promise.all([
+    createProceduralHouse(progress, activeProfile?.environment, {
+      resolution: quality.bootResolution,
+      anisotropy: quality.anisotropy
+    }),
     renderer.setupEnvironment(progress)
   ])
   assertWorldContract(world)
@@ -170,13 +216,13 @@ async function boot(): Promise<void> {
   // obvious the engine is fine and the *pack* is not.
   let loaded: LoadedPack
   try {
-    loaded = await loadPack(patientId, world, { breakages, onProgress: progress, anisotropy: renderer.renderer.capabilities.getMaxAnisotropy() })
+    loaded = await loadPack(patientId, world, { breakages, onProgress: progress, anisotropy: quality.anisotropy })
     if (activeProfile) {
       const personal = profilePack(activeProfile, loaded.pack)
       const checked = validate(personal, world, true)
       if (!checked.pack) throw new PackRejected(activeProfile.id, checked.problems)
       loaded.media.dispose()
-      const result = await loadMedia(checked.pack, { resolver: new MediaResolver(activeProfile), anisotropy: renderer.renderer.capabilities.getMaxAnisotropy() })
+      const result = await loadMedia(checked.pack, { resolver: new MediaResolver(activeProfile), anisotropy: quality.anisotropy })
       loaded = { patientId: activeProfile.id, pack: checked.pack, ...result }
     }
   } catch (error) {
@@ -388,6 +434,8 @@ async function boot(): Promise<void> {
     ui.showLevelSelect({
       onPersonalise: () => openProfileEditor(savedProfile, renderer.renderer.capabilities.maxTextureSize, () => player.clearInput()),
       personalisationLabel: activeProfile ? 'Edit Profile' : 'Personalise Home',
+      onSetup: () => openSetup(() => player.clearInput()),
+      setupLabel: describeSetup(agentConfig),
       storageWarning,
       title: `Smriti — ${pack.patient.name}`,
       subtitle:
@@ -409,6 +457,10 @@ async function boot(): Promise<void> {
     })
     overlayMode = 'levels'
   }
+
+  // The Setup button says which mode is chosen, so choosing one has to redraw it —
+  // but only when the level list is what is actually on screen.
+  relabelSetupButton = () => { if (overlayMode === 'levels') showLevels() }
 
   // §5.1: an unlock we did not ask for is a pause.
   player.onUnexpectedUnlock = () => state.pause()
@@ -590,10 +642,37 @@ async function boot(): Promise<void> {
   }
 
   // Performance measurement (§7). renderer.info gives draw calls and triangles only;
-  // frame time is sampled here over FRAME_SAMPLES frames once the world is up.
+  // frame time is sampled here over FRAME_SAMPLES frames once the world is up — and,
+  // now, once the resolution has stopped moving, so a figure belongs to one resolution
+  // rather than to an average of the rungs the ladder passed through on the way up.
   const samples: number[] = []
   let warmup = 0
   let perf: PerfResult | null = null
+
+  /**
+   * §7's own warning is that a frame time sitting on a multiple of the refresh interval
+   * is a v-sync reading and not a cost. That is precisely what makes it usable as a
+   * signal: while the interval holds, the deadline is being met and there is headroom to
+   * spend; when it jumps, there is not. The ladder climbs on the first and freezes on
+   * the second, and never reports the interval as a cost — that is still `perf` below.
+   */
+  const adaptive = new AdaptiveResolution({
+    ladder: pixelRatioLadder(quality.maxPixelRatio),
+    onChange: (ratio) => {
+      renderer.setPixelRatio(ratio)
+      // §7 again: a frame-time figure that spans two resolutions describes neither. A
+      // correction after the climb restarts the sample, so whatever is finally reported
+      // belongs to the resolution the session actually ended up at.
+      samples.length = 0
+      warmup = 0
+      perf = null
+      ;(window as unknown as { __smritiPerf: PerfResult | null }).__smritiPerf = null
+    },
+    // The two features would otherwise fight: the upgrade's JPEG decodes and GPU
+    // uploads are main-thread work, and a ladder measuring through them reads that
+    // one-off cost as this machine's steady frame time and freezes far too low.
+    startPaused: quality.upgradeResolution !== null
+  })
 
   const clock = new THREE.Clock()
   let last = performance.now()
@@ -636,7 +715,9 @@ async function boot(): Promise<void> {
 
     renderer.render()
 
-    if (perf === null) {
+    adaptive.sample(frameMs)
+
+    if (perf === null && adaptive.settled && !adaptive.waiting) {
       if (warmup < FRAME_WARMUP) {
         warmup++
       } else if (samples.length < FRAME_SAMPLES) {
@@ -653,6 +734,9 @@ async function boot(): Promise<void> {
           programs: info.programs?.length ?? 0,
           resolution: `${renderer.renderer.domElement.width}x${renderer.renderer.domElement.height}`,
           pixelRatio: renderer.renderer.getPixelRatio(),
+          tier: quality.tier,
+          anisotropy: quality.anisotropy,
+          textureResolution: houseTextures,
           userAgent: navigator.userAgent
         }
         console.log('[smriti] perf', perf)
@@ -665,8 +749,13 @@ async function boot(): Promise<void> {
       perf
         ? `draws ${info.render.calls}  tris ${info.render.triangles}\n` +
             `median ${perf.medianMs} ms  p95 ${perf.p95Ms} ms\n` +
-            `${perf.resolution} @ dpr ${perf.pixelRatio}`
-        : `draws ${info.render.calls}  tris ${info.render.triangles}\nmeasuring frame time… ${samples.length}/${FRAME_SAMPLES}`
+            `${perf.resolution} @ dpr ${perf.pixelRatio} · ${houseTextures} aniso ${quality.anisotropy}`
+        : `draws ${info.render.calls}  tris ${info.render.triangles}\n` +
+            (adaptive.waiting
+              ? `loading ${quality.upgradeResolution} textures…`
+              : adaptive.settled
+                ? `measuring frame time… ${samples.length}/${FRAME_SAMPLES}`
+                : `finding a resolution… dpr ${adaptive.ratio}`)
     )
 
     const step = runner?.current ?? null
@@ -824,10 +913,48 @@ async function boot(): Promise<void> {
       }
     }
   }
-  ;(window as unknown as { __smritiAssets: unknown }).__smritiAssets = { ...report, ...envReport }
-  console.log('[smriti] assets', { ...report, ...envReport })
+  let houseTextures: string = report.textureResolution
+  const assets = {
+    ...report,
+    ...envReport,
+    quality,
+    pixelRatioLadder: pixelRatioLadder(quality.maxPixelRatio),
+    resolutionSteps: adaptive.steps,
+    upgrade: null as unknown
+  }
+  const publishAssets = (): void => {
+    assets.textureResolution = houseTextures as typeof report.textureResolution
+    ;(window as unknown as { __smritiAssets: unknown }).__smritiAssets = assets
+  }
+  publishAssets()
+  console.log('[smriti] assets', assets)
 
   requestAnimationFrame(loop)
+
+  /**
+   * The background texture upgrade (§1.1). Started after the first frame is scheduled,
+   * never awaited, and never able to fail the boot: if it does not finish — or does not
+   * start, on a tier that does not ask for it — the house keeps the 1k maps it is
+   * already wearing and nothing about the session changes.
+   */
+  if (quality.upgradeResolution) {
+    void upgradeTextures(quality.upgradeResolution).then(
+      (result) => {
+        if (result.upgraded.length) houseTextures = result.resolution
+        assets.upgrade = result
+        publishAssets()
+        console.log('[smriti] texture upgrade', result)
+        // Only now is the frame time this machine's own, rather than this machine's
+        // plus twelve JPEG decodes. The ladder measures from here.
+        adaptive.resume()
+      },
+      (error) => {
+        assets.upgrade = { resolution: quality.upgradeResolution, upgraded: [], failed: [String(error)] }
+        publishAssets()
+        adaptive.resume()
+      }
+    )
+  }
 }
 
 /**

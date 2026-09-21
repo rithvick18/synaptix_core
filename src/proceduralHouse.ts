@@ -1,5 +1,6 @@
 import type { EnvironmentStyle } from './agent/environment'
-import { styleMaterial } from './EnvironmentMaterials'
+import { styleAnisotropy, styleMaterial, stylesSurface } from './EnvironmentMaterials'
+import type { TextureResolution } from './Quality'
 import * as THREE from 'three'
 import {
   ARCHES,
@@ -46,8 +47,11 @@ import type { StageProgress } from './ui'
  * lights, and is still walkable.
  */
 
-const POLY_HAVEN = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k'
+const POLY_HAVEN = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg'
 const TEXTURE_TIMEOUT_MS = 8000
+/** The background upgrade is not on the loading screen's critical path, and a 2k set is
+ *  four times the bytes of a 1k one, so it gets longer before it is given up on. */
+const UPGRADE_TIMEOUT_MS = 30000
 
 const SURFACE_COLOUR: Record<Surface, number> = {
   wall: 0xe8e2d8,
@@ -92,16 +96,32 @@ const TEXTURE_SET: Partial<Record<Surface, { name: string; tile: number }>> = {
 export interface HouseBuildReport {
   texturesLoaded: string[]
   texturesFailed: string[]
+  /** Which size the loaded sets are, now that it can change after boot. */
+  textureResolution: TextureResolution
+  anisotropy: number
   doorways: DoorwayReport[]
   reachability: ReachabilityReport[]
 }
 
+export interface HouseOptions {
+  /** What to fetch during boot. 1k everywhere: boot time is not for sale. */
+  resolution?: TextureResolution
+  anisotropy?: number
+}
+
+export interface UpgradeReport {
+  resolution: TextureResolution
+  upgraded: string[]
+  /** Sets that failed or were skipped; each keeps whatever it already had. */
+  failed: string[]
+}
+
 type MapTriplet = { map: THREE.Texture; roughnessMap: THREE.Texture; normalMap: THREE.Texture }
 
-function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Texture> {
+function loadTexture(loader: THREE.TextureLoader, url: string, timeoutMs = TEXTURE_TIMEOUT_MS): Promise<THREE.Texture> {
   return new Promise((resolve, reject) => {
     // A hung request must not hold the loading screen open — §1.1 is a hard "always works".
-    const timer = setTimeout(() => reject(new Error(`timeout ${url}`)), TEXTURE_TIMEOUT_MS)
+    const timer = setTimeout(() => reject(new Error(`timeout ${url}`)), timeoutMs)
     loader.load(url, (t) => { clearTimeout(timer); resolve(t) }, undefined, () => {
       clearTimeout(timer); reject(new Error(`failed ${url}`))
     })
@@ -112,10 +132,12 @@ function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Te
 async function loadSet(
   loader: THREE.TextureLoader,
   name: string,
+  options: { resolution: TextureResolution; anisotropy: number; timeoutMs?: number },
   settled: (ok: boolean) => void
 ): Promise<MapTriplet> {
+  const res = options.resolution
   const one = (suffix: string): Promise<THREE.Texture> =>
-    loadTexture(loader, `${POLY_HAVEN}/${name}/${name}_${suffix}_1k.jpg`).then(
+    loadTexture(loader, `${POLY_HAVEN}/${res}/${name}/${name}_${suffix}_${res}.jpg`, options.timeoutMs).then(
       (t) => {
         settled(true)
         return t
@@ -133,7 +155,12 @@ async function loadSet(
   map.colorSpace = THREE.SRGBColorSpace
   for (const t of [map, roughnessMap, normalMap]) {
     t.wrapS = t.wrapT = THREE.RepeatWrapping
-    t.anisotropy = 4
+    // Anisotropy is what a floor actually needs. A wall seen head-on looks the same at
+    // 1 as at 16; a floor running away from the camera is sampled along a direction the
+    // mip chain cannot represent, and without this it turns to mush about three metres
+    // out — at any texture resolution, which is why raising the maps without raising
+    // this would have bought almost nothing on the surfaces people look along.
+    t.anisotropy = options.anisotropy
   }
   return { map, roughnessMap, normalMap }
 }
@@ -166,7 +193,38 @@ function scaleBoxUV(geo: THREE.BufferGeometry, sx: number, sy: number, sz: numbe
 
 class Materials {
   private cache = new Map<Surface, THREE.MeshStandardMaterial>()
-  constructor(private sets: Map<Surface, MapTriplet | null>, private style?: EnvironmentStyle) {}
+  constructor(
+    private sets: Map<Surface, MapTriplet | null>,
+    private style?: EnvironmentStyle,
+    private anisotropy = 4
+  ) {}
+
+  /**
+   * Swaps a higher-resolution set onto an already-built material. Two refusals matter
+   * more than the swap itself:
+   *
+   * - A surface with no set is one whose 1k download failed. This is an upgrade, not a
+   *   retry: the flat-colour fallback §1.1 promises stays exactly where it is.
+   * - A surface a personalised environment has claimed keeps the caregiver's colour and
+   *   drawn pattern. Re-attaching a photographed plaster map there would silently
+   *   overwrite the home they generated from their own rooms.
+   */
+  replace(surface: Surface, maps: MapTriplet): boolean {
+    if (!this.sets.get(surface)) return false
+    if (stylesSurface(surface, this.style)) return false
+    const previous = this.sets.get(surface)!
+    this.sets.set(surface, maps)
+    const material = this.cache.get(surface)
+    if (material) {
+      material.map = maps.map
+      material.roughnessMap = maps.roughnessMap
+      material.normalMap = maps.normalMap
+      material.needsUpdate = true
+    }
+    // Released only after the replacements are bound, so no frame renders without one.
+    for (const t of [previous.map, previous.roughnessMap, previous.normalMap]) t.dispose()
+    return true
+  }
 
   get(surface: Surface): THREE.MeshStandardMaterial {
     let m = this.cache.get(surface)
@@ -186,6 +244,7 @@ class Materials {
       m.color.set(surface === 'wall' ? 0xf4ead9 : 0xffffff)
     }
     if (this.style) styleMaterial(m, surface, this.style)
+    styleAnisotropy(m, this.anisotropy)
     this.cache.set(surface, m)
     return m
   }
@@ -845,8 +904,11 @@ export function auditReachability(
 
 export async function createProceduralHouse(
   onProgress?: StageProgress,
-  environment?: EnvironmentStyle
-): Promise<{ world: WorldSource; report: HouseBuildReport }> {
+  environment?: EnvironmentStyle,
+  options: HouseOptions = {}
+): Promise<{ world: WorldSource; report: HouseBuildReport; upgradeTextures: (to: TextureResolution) => Promise<UpgradeReport> }> {
+  const resolution = options.resolution ?? '1k'
+  const anisotropy = options.anisotropy ?? 4
   const root = new THREE.Group()
   root.name = 'proceduralHouse'
 
@@ -871,7 +933,7 @@ export async function createProceduralHouse(
       try {
         sets.set(
           surface,
-          await loadSet(loader, name, (fileOk) => {
+          await loadSet(loader, name, { resolution, anisotropy }, (fileOk) => {
             if (fileOk) textureDone++
             else textureFailed++
             onProgress?.('textures', textureDone, textureFailed, textureTotal)
@@ -893,7 +955,7 @@ export async function createProceduralHouse(
   // audits below take visible time on a slow machine and silence looks like a hang.
   onProgress?.('house', 0, 0, 0)
 
-  const mats = new Materials(sets, environment)
+  const mats = new Materials(sets, environment, anisotropy)
   const blockers: THREE.Box3[] = []
 
   // ---- Ground, floors, ceilings ----
@@ -1210,7 +1272,48 @@ export async function createProceduralHouse(
     )
   }
 
+  /**
+   * Raises the loaded sets to a larger size, after boot and off the critical path.
+   *
+   * The reason this is an upgrade pass rather than simply a bigger `bootResolution` is
+   * that the two costs are different things. A 2k set is four times the bytes, which is
+   * download time — paid once, and paid on the loading screen if it happens during boot.
+   * It is *not* four times the frame cost: the draw calls, the shaders and the triangle
+   * count are identical, and a mip chain means the pixels being sampled at any distance
+   * are about the same number either way. So the sharpness is close to free to *render*
+   * and expensive to *fetch*, and fetching it afterwards is how you get one without the
+   * other. Sets are fetched one at a time for the same reason — twelve simultaneous 2k
+   * requests would compete with the memory pack's photographs and voices.
+   */
+  const upgradeTextures = async (to: TextureResolution): Promise<UpgradeReport> => {
+    const upgraded: string[] = []
+    const failed: string[] = []
+    for (const surface of surfaces) {
+      const { name } = TEXTURE_SET[surface]!
+      if (!sets.get(surface) || stylesSurface(surface, environment)) {
+        failed.push(name)
+        continue
+      }
+      try {
+        const maps = await loadSet(loader, name, { resolution: to, anisotropy, timeoutMs: UPGRADE_TIMEOUT_MS }, () => {})
+        if (mats.replace(surface, maps)) upgraded.push(name)
+        else {
+          for (const t of [maps.map, maps.roughnessMap, maps.normalMap]) t.dispose()
+          failed.push(name)
+        }
+      } catch {
+        // §1.1 again: a failed upgrade is not a failure, it is the previous size.
+        failed.push(name)
+      }
+    }
+    return { resolution: to, upgraded, failed }
+  }
+
   // Total stays 0 so the row shows a tick and no count: there was nothing to fetch.
   onProgress?.('house', 1, 0, 0)
-  return { world, report: { texturesLoaded, texturesFailed, doorways, reachability } }
+  return {
+    world,
+    report: { texturesLoaded, texturesFailed, textureResolution: resolution, anisotropy, doorways, reachability },
+    upgradeTextures
+  }
 }

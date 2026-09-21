@@ -45,6 +45,13 @@ npm run check      # headless checks: pack validation, hint ladder, aggregation,
 npm run check:offline   # after a build: drives all three levels with the network off
 ```
 
+On first load the app asks **where the model that builds your home's appearance should
+run** — offline, on this computer via llama.cpp, or online via Google's
+`gemini-3.5-flash-lite`. The answer is remembered and can be changed from the **Setup**
+button on the level screen. Playing a level never uses a model in either case, so
+"Decide later" leaves the game fully playable. See
+[Agent-assisted caregiver setup](#agent-assisted-caregiver-setup--checkpoint-f-specmd-10).
+
 ## Controls
 
 | Key | Action |
@@ -85,14 +92,17 @@ first, so a switch or a replay can never blend two together; the file writes out
 ## Checks (SPEC.md §8)
 
 ```bash
-npm run check           # 767 assertions across 7 suites, headless, no browser
+npm run check           # 993 assertions across 9 counted suites, headless, no browser
 npm run build && npm run check:offline   # ~90 assertions in a real browser, network off
 ```
 
 `npm run check` typechecks `tools/checks/*.check.ts` against `src/` and then runs each
 under node with esbuild. It covers §4.2 validation in both choice formats, the hint ladder,
 §4.4 aggregation, repeated room visits, multiple recall steps per level, and level
-switching. `npm run check -- pack` runs one suite.
+switching. Both provider adapters are exercised against an injected fake `fetch`, so the
+offline adapter's loopback refusal and the online adapter's one-destination and no-key
+refusals are proved without a model server, an API key or a socket:
+`npm run check -- gemini` runs that suite, and `npm run check -- pack` any other.
 
 ## Offline check (SPEC.md §1.1, §6 row D)
 
@@ -149,6 +159,46 @@ deleting anything from disk.
 `three` is pinned to exactly `0.181.2`, so the current API names apply: `HDRLoader`
 (renamed from `RGBELoader` in r179) and `PCFShadowMap` (soft shadows moved here in r181;
 `PCFSoftShadowMap` is deprecated for `WebGLRenderer`). No `^` on the pin.
+
+## Resolution (SPEC.md §1.1, §7)
+
+How sharp the house looks is three separate things, and each is now decided by what the
+machine can show rather than pinned to the cheapest value that could never hurt anyone.
+
+| | Before | Now |
+| --- | --- | --- |
+| Poly Haven maps | 1k, always | 1k at boot, upgraded to 2k in the background |
+| Anisotropy | 4, hard-coded | the hardware maximum, typically 16 |
+| Pixel ratio | 1, pinned | climbs a ladder to at most 2, by measurement |
+| Procedural floor pattern | 256 px | 1024 px, mipmapped |
+
+**Nothing costs boot time.** Every tier still boots on 1k maps, because the loading
+screen is the one place the extra bytes would actually be felt. The 2k set is fetched
+afterwards, one set at a time, and swapped onto the live materials. It is not four times
+the frame cost — the draw calls, shaders and triangles are identical and a mip chain
+means roughly the same texels are sampled either way — it is four times the *download*,
+which is why it is paid off the critical path. A failed or slow upgrade leaves the house
+in the 1k maps it is already wearing (§1.1), exactly as a failed download always has.
+
+**Nothing is raised on a machine that has not demonstrated it can afford it.** The pixel
+ratio starts at 1 and climbs one rung at a time while the frame deadline is met, freezes
+one rung below where it is missed, and keeps watching afterwards so it can give back a
+rung that turns out not to hold. It never climbs twice, so it can correct but not
+oscillate. A machine with no headroom is left at exactly the settings that shipped
+before any of this existed — as is a software rasteriser, which is what
+`check:offline` runs on, so its §7 figure stays comparable with every earlier run.
+
+`?quality=software|baseline|full` forces a tier, for testing a path your machine would
+not choose, or for a GPU that is read wrongly. It can ask for a tier but never for
+anisotropy the driver lacks or a ratio above the display's own. The on-screen readout
+(bottom right) shows the settled ratio, the map size and the anisotropy in use, and
+`window.__smritiAssets` carries the tier, the reason for it, the ladder and every step
+it took.
+
+The HDRI is deliberately still 1k: it is never sampled directly, only prefiltered by
+`PMREMGenerator` into a fixed-size mip chain, so a 2k source would be four times the
+download for a difference confined to the sharpest reflections in a house made of
+plaster, laminate and fabric.
 
 ## Degradation (SPEC.md §1.1)
 
@@ -219,26 +269,50 @@ offending token, never silently dropped. A prompt-injection attempt — rendered
 uploaded photo trying to add unrelated content — is caught the same structural way: the
 injected text is simply not in the caregiver's own allow-list, so F-a rejects it.
 
-**The model runs on your machine.** Inference is llama.cpp's `llama-server` serving a
-4-bit quantised ~4B vision model over loopback — no hosted provider, no API key, no
-account. This is the difference between a privacy policy and a privacy property: patient
+**Two setup modes, chosen at start.** The first thing the app asks is where the model
+runs. The screen is `src/agent/setupModeUI.ts`; the answer is one field, `setupMode`, and
+nothing else in the app branches on it.
+
+| | **Offline setup** | **Online setup** |
+| --- | --- | --- |
+| Model | a 4-bit quantised ~4B vision model | `gemini-3.5-flash-lite` |
+| Runtime | llama.cpp's `llama-server` over loopback | Google's Gemini Interactions API |
+| Adapter | `src/agent/llamaCpp.ts` | `src/agent/gemini.ts` |
+| Needs | the server running on this machine | a Gemini API key |
+| Photographs | never leave the device | downscaled probe copies cross the internet |
+
+Offline mode is the difference between a privacy policy and a privacy property: patient
 photographs never leaving the device is not a promise about a third party's conduct, it
 is a fact about the network path. `LlamaCppProviderAdapter` refuses any `baseUrl` that
 does not resolve to loopback, before opening a socket, and the endpoint is read from
 `.env` only — never persisted to `localStorage` — so a tampered stored config cannot
 express an off-machine address at all.
 
-A small local model is weaker than a frontier hosted one and its proposals are rougher.
-That is an acceptable trade here, because the design already assumes the model is
+Online mode gives that property up, and says so on the setup screen rather than in a
+footnote. What is left to enforce, and what `GeminiProviderAdapter` does enforce before
+it opens a socket, is that there is exactly one destination — HTTPS to
+`generativelanguage.googleapis.com`, every other host refused — and that nothing is sent
+at all without a key, rather than uploading the images and finding out. The API key is
+held in this browser and travels as the `x-goog-api-key` header; switching back to
+offline clears it, so a machine returned to local inference carries no credential.
+
+A small local model is weaker than a frontier hosted one and its proposals are rougher;
+online mode is the trade in the other direction, buying accuracy and nothing to install
+at the cost of the network path. Either way the design already assumes the model is
 untrusted: every proposal passes the firewall and then a human before it can reach a
 patient. Accuracy buys convenience, not correctness.
 
-**Consent and privacy.** The first call is gated behind a one-time dialog (§10.6) naming
-what reads the photographs (a model on this computer), what it is shown (a downscaled,
-EXIF-stripped "probe" copy) and what it never is (originals, audio, telemetry — and
-nothing at all to the internet). With local inference this is a disclosure that a model
-reads the photographs, not consent to a transfer. Declining leaves the app at exactly the
-behaviour it had before Checkpoint F existed. EXIF — GPS above all — is stripped before
+**Consent and privacy.** Each mode carries its own disclosure (§10.6), and the setup
+screen renders it next to the button that chooses that mode — what reads the
+photographs, what it is shown (a downscaled, EXIF-stripped "probe" copy) and what it
+never is. Offline mode's is a disclosure that a model reads the photographs at all, not
+consent to a transfer, and it still says nothing reaches the internet. Online mode's is a
+transfer consent, and does not repeat a promise it cannot keep.
+
+Consent never crosses a mode change: agreeing that a model on your own machine may look
+at the photographs is not agreeing that Google may, so `applySetupMode` drops
+`consentGiven` whenever the mode actually changes and the screen re-asks. Declining, in
+either mode, leaves the app at exactly the behaviour it had before Checkpoint F existed. EXIF — GPS above all — is stripped before
 any derivative is produced (`src/agent/images.ts`): every derivative is a fresh canvas
 re-encode, never the uploaded bytes. `agent-audit.jsonl` (git-ignored) records that a
 call happened — timestamp, tool, asset id, byte count, model id, outcome — and is
@@ -256,6 +330,16 @@ that tool's parameters, and `maxProposalsPerRun` is enforced by the sampler rath
 by trimming an over-long list afterwards. It guarantees shape, not truth — which is
 still what the firewall is for.
 
+Online mode cannot constrain a sampler it does not own, so it uses Gemini's own function
+calling with `tool_choice.allowed_tools.mode: "any"`, which forces a call to one of the
+declared tools. That is the weaker guarantee, so `gemini.ts` re-checks what arrives: a
+tool name that was never declared is a `malformed-response`, and `maxProposalsPerRun` is
+applied as a trim on arrival rather than a cap during sampling. Gemini's parameter schema
+is an OpenAPI subset, so `AGENT_TOOL_SCHEMA` is projected onto the keywords it accepts
+(`additionalProperties`, `pattern` and `const` are dropped) — which loosens what the
+model is *asked* for and nothing that is *accepted*, because the firewall and
+`validateEnvironment` still run on everything that comes back.
+
 ### Running the local model
 
 ```bash
@@ -270,6 +354,15 @@ the adapter reports `model-not-loaded` with that flag named rather than failing 
 Copy `.env.example` to `.env` to point at a different port. The room-environment
 generator reads these settings when Generate is clicked; it does not depend on the older
 pack-authoring assistant’s `agent.enabled` flag.
+
+### Running the online model
+
+Nothing to install. Choose **Online setup** on the start screen and paste a Gemini API
+key (create one at <https://aistudio.google.com/apikey>); it is kept in this browser.
+`.env.example` has `VITE_GEMINI_API_KEY` and `VITE_GEMINI_MODEL` for developers who would
+rather not re-type it — but a `VITE_` variable is baked into the built bundle, so for
+anything beyond your own machine leave it blank and use the setup screen. The model
+defaults to `gemini-3.5-flash-lite`.
 
 **The older pack-authoring assistant ships with `agent.enabled: false`.** This is the default in
 `src/agent/config.ts`, and is separate from the active room-environment generator described below.
@@ -290,9 +383,8 @@ pack-authoring assistant’s `agent.enabled` flag.
   `src/agent/llamaCpp.ts` (the only implementation: a local `llama-server` over loopback,
   grammar-constrained tool calls, timeout, retry-once for the two genuinely transient
   cases, and typed failures for `server-unreachable`, `model-not-loaded`, `overloaded`,
-  `timeout` and `malformed-response` — there is no `no-key` or `bad-key`, because nothing
-  authenticates), `src/agent/config.ts` (the `AgentConfig` shape and the §10.6 consent
-  gate), `src/agent/audit.ts` (`agent-audit.jsonl` logging), and
+  `timeout` and `malformed-response`), `src/agent/config.ts` (the `AgentConfig` shape and
+  the §10.6 consent gate), `src/agent/audit.ts` (`agent-audit.jsonl` logging), and
   `src/agent/selectProvider.ts` (chooses stub vs. local model from config — stub stays
   the default in every test).
 - **F3 — caregiver review and commit.** `src/agent/review.ts` (`ReviewSession`: firewall
@@ -320,16 +412,18 @@ The pack-proposal review workflow remains inactive. The room-environment generat
 
 Open **Personalise Home**, select one to three room reference images, optionally add
 visual preferences, and click **Generate environment from photos**. Review or edit the
-colour swatches, then **Save and Play**. The local vision model reads downscaled,
-metadata-free copies and produces a validated environment description. Wall paint,
+colour swatches, then **Save and Play**. The vision model your setup mode selected reads
+downscaled, metadata-free copies and produces a validated environment description. Wall paint,
 floor colour and procedural wood/tile/carpet patterns, wood and upholstery colours,
 accents, and indoor lighting change in the playable house. Settings persist in IndexedDB
 and reload without inference. Reset environment restores the default appearance.
 
 This is appearance matching within the existing house, not photogrammetry: floor plan,
-furniture shapes and placement remain fixed. Generation requires a running vision-capable
-llama-server with a matching projector (see Running the local model above). The default
-endpoint is `http://127.0.0.1:8080`; `.env.example` contains overrides. No inference runs
-until Generate is clicked. Failure keeps the previous environment and shows a retry/setup
-message. Reference uploads are held only for this editor session; the generated style is
-saved. Browser CORS/local-network permissions must allow the app to reach llama-server.
+furniture shapes and placement remain fixed. Which model reads the photographs is the
+setup mode chosen at start, and the form says so above the button: offline needs a
+running vision-capable llama-server with a matching projector (default
+`http://127.0.0.1:8080`, overridable in `.env`), online needs a Gemini API key. No
+inference runs until Generate is clicked, in either mode. Failure keeps the previous
+environment and shows a retry/setup message. Reference uploads are held only for this
+editor session; the generated style is saved. In offline mode, browser CORS/local-network
+permissions must allow the app to reach llama-server.

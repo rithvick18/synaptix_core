@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js'
+import type { DeviceInfo } from './Quality'
 import type { StageProgress } from './ui'
 
 /**
@@ -10,6 +11,14 @@ import type { StageProgress } from './ui'
  * r181; `PCFSoftShadowMap` is deprecated for `WebGLRenderer`).
  */
 
+/**
+ * Deliberately still 1k, while the surface textures now climb to 2k. This file is never
+ * sampled directly: `scene.background` is a flat colour, and the HDRI's only job is to
+ * be prefiltered by `PMREMGenerator` into a small mip chain of irradiance. That output
+ * is a fixed size whatever goes in, so a 2k source would be four times the download for
+ * a difference confined to the sharpest reflections in a house made of plaster, laminate
+ * and fabric. Resolution spent where it cannot be seen is just load.
+ */
 const HDRI_URL = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_09_1k.hdr'
 const HDRI_TIMEOUT_MS = 10000
 
@@ -28,8 +37,10 @@ export class Renderer {
 
   constructor(canvasParent: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
-    // §0/§7: pixelRatio is pinned to 1 so measured frame time means the same thing on
-    // every machine, and so a retina laptop does not quietly render 4x the pixels.
+    // Starts at 1 and stays there until `Quality.ts`'s ladder has measured that this
+    // machine can afford more — see `setPixelRatio`. Beginning at the cheapest rung is
+    // what makes the first measurement a reading of the display's own refresh interval
+    // rather than of a resolution nobody has checked yet.
     this.renderer.setPixelRatio(1)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -123,6 +134,40 @@ export class Renderer {
       // silent fallback is how a demo machine ends up looking wrong for no visible reason.
       onProgress?.('hdri', 0, 1, 1)
       return { hdri: 'failed' }
+    }
+  }
+
+  /**
+   * The one lever that changes how many pixels are drawn, and therefore the only one
+   * whose cost is quadratic. `AdaptiveResolution` owns when this is called; §7's sampler
+   * waits until it has stopped calling it, so a reported frame time belongs to one
+   * resolution. `setSize` preserves the ratio, so resizing afterwards keeps it.
+   */
+  setPixelRatio(ratio: number): void {
+    if (this.renderer.getPixelRatio() === ratio) return
+    this.renderer.setPixelRatio(ratio)
+    this.renderer.setSize(window.innerWidth, window.innerHeight)
+  }
+
+  /** What `Quality.detectQuality` needs, read once. `WEBGL_debug_renderer_info` is the
+   *  only way to tell a real GPU from a software rasteriser, and it may be absent. */
+  deviceInfo(): DeviceInfo {
+    const gl = this.renderer.getContext()
+    let name = ''
+    try {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info')
+      if (ext) name = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) ?? '')
+    } catch {
+      /* Blocked by a privacy setting; the baseline tier is the safe reading. */
+    }
+    const nav = navigator as Navigator & { deviceMemory?: number }
+    return {
+      renderer: name,
+      maxTextureSize: this.renderer.capabilities.maxTextureSize,
+      maxAnisotropy: this.renderer.capabilities.getMaxAnisotropy(),
+      deviceMemory: nav.deviceMemory,
+      hardwareConcurrency: nav.hardwareConcurrency,
+      devicePixelRatio: window.devicePixelRatio || 1
     }
   }
 

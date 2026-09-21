@@ -233,6 +233,31 @@ try {
       texturesLoaded: parsedAssets.texturesLoaded,
       texturesFailed: parsedAssets.texturesFailed
     }))
+
+    // --- §1.1/§7 the resolution policy -------------------------------------
+    //
+    // Headless Chrome draws on SwiftShader, so this run must land in the software tier
+    // and keep every setting this project had before the adaptive resolution existed.
+    // That is what lets the §7 figure below stay comparable with every earlier run:
+    // a number measured at a different pixel ratio is a different number.
+    console.log('  quality:', JSON.stringify(parsedAssets.quality))
+    ok(
+      parsedAssets.quality?.tier === 'software',
+      'the software rasteriser is recognised as one',
+      `tier = ${parsedAssets.quality?.tier} · renderer = ${parsedAssets.quality?.reason}`
+    )
+    ok(parsedAssets.quality?.maxPixelRatio === 1, 'the pixel ratio is left at 1 on a software rasteriser')
+    ok(parsedAssets.quality?.upgradeResolution === null, 'no 2k upgrade is attempted on a software rasteriser')
+    ok(parsedAssets.textureResolution === '1k', 'the house is wearing the 1k maps it booted with')
+    ok(
+      (await cdp.eval('window.__smriti.renderer.renderer.getPixelRatio()')) === 1,
+      'the renderer is actually drawing at dpr 1'
+    )
+    ok(
+      [...requests.values()].every((r) => !/\/jpg\/2k\//.test(r.url)),
+      'no 2k texture was requested',
+      [...requests.values()].filter((r) => /2k/.test(r.url)).map((r) => r.url).join(', ')
+    )
     ok(
       parsedAssets.hdri === 'failed' || !OFFLINE,
       '§1.1 the HDRI download fails offline and the scene falls back'

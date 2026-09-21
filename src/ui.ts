@@ -76,6 +76,10 @@ export interface LevelChoice {
 export interface LevelSelectView {
   onPersonalise?: () => void
   personalisationLabel?: string
+  /** Reopens the start-up setup screen (offline llama.cpp / online Gemini). */
+  onSetup?: () => void
+  /** What that button says, including which mode is currently chosen. */
+  setupLabel?: string
   storageWarning?: string
   title: string
   subtitle: string
@@ -474,6 +478,13 @@ export class UI {
       const button = document.createElement('button')
       button.textContent = view.personalisationLabel ?? 'Personalise Home'
       button.onclick = e => { e.stopPropagation(); view.onPersonalise?.() }
+      this.overlayCard.append(button)
+    }
+    if (view.onSetup) {
+      const button = document.createElement('button')
+      button.dataset.act = 'setup'
+      button.textContent = view.setupLabel ?? 'Setup'
+      button.onclick = e => { e.stopPropagation(); view.onSetup?.() }
       this.overlayCard.append(button)
     }
     if (view.storageWarning) {

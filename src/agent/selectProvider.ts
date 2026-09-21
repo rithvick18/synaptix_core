@@ -3,9 +3,14 @@
  * tests. This is the one place that decides, from `AgentConfig.provider`, which
  * `ProviderAdapter` a run actually talks to — every caller downstream only ever sees the
  * `ProviderAdapter` interface, real or stub.
+ *
+ * `provider` is derived from the setup mode chosen at start (`config.ts`): offline
+ * selects `llama-cpp`, online selects `gemini`. Nothing else in the app branches on the
+ * mode, which is why switching it is one write to one field.
  */
 import type { ProviderAdapter, ProviderRequest, ProviderResult } from './provider'
 import { LlamaCppProviderAdapter, type LlamaCppConfig } from './llamaCpp'
+import { GeminiProviderAdapter, DEFAULT_GEMINI_MODEL, type GeminiConfig } from './gemini'
 import { StubModel, type StubModelScript } from './stubModel'
 import type { AgentConfig } from './config'
 
@@ -35,6 +40,7 @@ export class NullProviderAdapter implements ProviderAdapter {
 
 export interface SelectProviderOptions {
   llamaCpp?: LlamaCppConfig
+  gemini?: GeminiConfig
   stubScript?: StubModelScript
 }
 
@@ -44,6 +50,18 @@ export function selectProvider(config: AgentConfig, options: SelectProviderOptio
   switch (config.provider) {
     case 'llama-cpp':
       return new LlamaCppProviderAdapter({ model: config.model, maxCalls: config.maxProposalsPerRun, ...options.llamaCpp })
+    case 'gemini': {
+      // The stored config wins over `.env` for the two fields a caregiver can actually
+      // set, because `.env` is a developer's convenience and the setup screen is not.
+      // Spreading first would let an absent env var overwrite a key typed in the browser.
+      const env = options.gemini ?? {}
+      return new GeminiProviderAdapter({
+        ...env,
+        apiKey: config.apiKey || env.apiKey,
+        model: config.model || env.model || DEFAULT_GEMINI_MODEL,
+        maxCalls: config.maxProposalsPerRun
+      })
+    }
     case 'stub':
       return new StubProviderAdapter(options.stubScript ?? EMPTY_STUB_SCRIPT)
     case 'none':

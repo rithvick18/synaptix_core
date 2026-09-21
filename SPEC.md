@@ -543,6 +543,12 @@ Measure separately: sample `performance.now()` deltas in the animation loop over
 after the world has loaded, and report median and 95th-percentile frame time alongside
 resolution, `pixelRatio`, browser and machine.
 
+The sample must belong to **one** set of settings. `pixelRatio` is chosen at runtime by
+`Quality.ts`'s ladder, and the background texture upgrade changes what is being sampled,
+so the sampler starts only once the upgrade has finished and the ladder has stopped
+moving, and restarts if a later correction moves it again. A figure averaged across two
+resolutions describes neither of them.
+
 If the tool cannot run a browser, it reports **"unmeasured"** and lists this as a manual task.
 It must not state an FPS figure it did not measure.
 
@@ -643,8 +649,9 @@ rectangle calculation. Photographs are never stretched. Portrait cards receive c
 square thumbnail Blobs; reference photographs keep their original aspect. Textures use
 sRGB, mipmaps, trilinear minification and the renderer's supported anisotropy. Photo
 plates use unlit, non-tone-mapped materials to avoid scene glare/darkening; focus tint
-applies to their frames rather than the photographs. Renderer pixel ratio remains 1,
-independent of photo quality. Full-resolution image bitmaps close after each conversion;
+applies to their frames rather than the photographs. Renderer pixel ratio is independent
+of photo quality: it is set by §7's adaptive ladder from measured frame time alone, and
+starts — and on any machine that cannot demonstrably afford more, stays — at 1. Full-resolution image bitmaps close after each conversion;
 saving converts one original at a time.
 
 `MediaResolver` handles both demo paths and local media IDs. It recreates temporary
