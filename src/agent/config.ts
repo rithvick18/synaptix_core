@@ -5,7 +5,7 @@
  * structural — the agent code is not even in the bundle's module graph yet.
  */
 
-export type AgentProvider = 'none' | 'stub' | 'anthropic'
+export type AgentProvider = 'none' | 'stub' | 'llama-cpp'
 
 export interface AgentConfig {
   enabled: boolean
@@ -32,7 +32,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
 const STORAGE_KEY = 'smriti-agent-config-v1'
 
 function isAgentProvider(v: unknown): v is AgentProvider {
-  return v === 'none' || v === 'stub' || v === 'anthropic'
+  return v === 'none' || v === 'stub' || v === 'llama-cpp'
 }
 
 /** Merges unknown persisted JSON onto the default, rejecting anything malformed rather
@@ -81,10 +81,23 @@ export interface ConsentPrompt {
   notSent: string[]
 }
 
+/**
+ * Local inference changes what this dialog is *for*. There is no third party to name and
+ * no upload to authorise, so this is a disclosure that a model reads the photographs at
+ * all — not a data-transfer consent. The gate is kept because declining must still leave
+ * the app at Checkpoint E behaviour, which is a property worth having either way.
+ */
 export const CONSENT_PROMPT: ConsentPrompt = {
-  provider: 'Anthropic',
-  sent: ['a downscaled, EXIF-stripped copy of each uploaded photo (the "probe" derivative)'],
-  notSent: ['original photo files', 'audio/voice clips', 'telemetry', 'anything once you decline']
+  provider: 'a model running on this computer (llama.cpp)',
+  sent: [
+    'a downscaled, EXIF-stripped copy of each uploaded photo (the "probe" derivative), passed to a local llama-server over the loopback interface'
+  ],
+  notSent: [
+    'anything to the internet — no photograph, note or telemetry leaves this machine',
+    'original photo files',
+    'audio/voice clips',
+    'anything once you decline'
+  ]
 }
 
 /**

@@ -779,6 +779,24 @@ a run with zero calls on a sparse upload is a red flag, not a success.
 `commitProposal(id)` and `rejectProposal(id)` are UI-only. They are absent from the schema
 handed to the model.
 
+### How the calls are obtained — constrained, not requested
+
+A 4B model asked politely for JSON will sometimes answer in prose, and Gemma-class chat
+templates carry no native tool-calling support to fall back on. So the adapter does not
+ask for tool calls, it **constrains** them: `AGENT_TOOL_SCHEMA` is compiled into a single
+JSON schema — an envelope whose `calls[]` items are a discriminated union over every tool,
+keyed by a `const` name — and passed as `response_format: { type: 'json_schema' }`.
+llama.cpp converts that to a GBNF grammar and enforces it during sampling.
+
+The model therefore *cannot* emit a token sequence outside the schema. `tool` is always a
+real tool, `args` always matches that tool's own parameters, and `maxItems` enforces
+`maxProposalsPerRun` at the sampler rather than by trimming an over-long list afterwards.
+This is a stronger guarantee than a hosted function-calling API offers, and it is the
+reason a small local model is viable here at all.
+
+It guarantees shape, not truth. A grammatically perfect proposal can still assert a fact
+nobody supplied, which is what §10.3's firewall is for.
+
 ---
 
 ## 10.3 The content firewall
@@ -838,9 +856,13 @@ The system prompt states this, but the system prompt is not the control — §10
 
 1. **Strip EXIF**, GPS above all, on receipt. Nothing downstream ever sees it.
 2. Reject non-image MIME, > 15 MB, or dimensions beyond sane bounds.
-3. Produce three derivatives locally: `probe` (max 1024 px, sent to the model), `texture`
+3. Produce three derivatives locally: `probe` (max 1024 px, shown to the model), `texture`
    (max 1024 px, power-of-two padded, used in-world), `thumb` (256 px, for review UI).
-4. **Only `probe` leaves the machine.** Originals never do.
+4. **Nothing leaves the machine at all.** Inference is local (§10.6), so `probe` travels
+   no further than the loopback interface. It stays a distinct, downscaled derivative
+   anyway: a 4B vision model gains nothing from full resolution and costs real time on it,
+   and keeping originals out of the model path means a future change of runtime cannot
+   quietly widen what is exposed.
 5. The model proposes `crop` as a normalised rect; the caregiver adjusts it with drag handles.
    The committed crop is whatever the caregiver left in the box, not what the model said.
 6. Colour space and texture flags follow the existing anchor injection path from §4.1 — the
@@ -848,13 +870,32 @@ The system prompt states this, but the system prompt is not the control — §10
 
 ---
 
-## 10.6 Privacy
+## 10.6 Privacy — inference is local
 
-Local-dev-only runtime is chosen, but images still leave the machine to reach a provider.
+**The model runs on the caregiver's machine.** Inference is `llama.cpp`'s `llama-server`
+serving a 4-bit quantised ~4B vision model (Gemma 3 4B class, with its `--mmproj` vision
+projector), reached over loopback at `http://127.0.0.1:8080` through its OpenAI-compatible
+endpoint. No hosted provider, no API key, no account.
 
-- **One-time consent** before the first call: a dialog naming the provider, what is sent
-  (a downscaled, EXIF-stripped copy), and what is not (originals, audio, telemetry). Declining
-  leaves the whole feature off and manual authoring fully available.
+This is the difference between a privacy policy and a privacy property. Patient
+photographs and caregiver notes are the most sensitive content this project touches, and
+with local inference their never leaving the device is not a promise about a third party's
+conduct — it is a fact about the network path. `LlamaCppProviderAdapter` rejects any
+`baseUrl` that does not resolve to loopback, so a mistyped or hand-edited config cannot
+turn the agent into an uploader.
+
+A consequence worth stating plainly: a small local model is weaker than a frontier hosted
+one, and its proposals will be rougher. That is an acceptable trade here, because §10.1's
+design already assumes the model is untrusted — every proposal passes the firewall and
+then a human before it can reach a patient. The agent is an accelerator, not an authority,
+so accuracy buys convenience rather than correctness.
+
+- **One-time disclosure** before the first call: a dialog naming what reads the
+  photographs (a model on this computer), what it is shown (a downscaled, EXIF-stripped
+  copy), and what it is not (originals, audio, telemetry — and nothing to the internet).
+  This is a disclosure that a model reads the photographs at all, not consent to a
+  transfer. Declining still leaves the whole feature off and manual authoring fully
+  available.
 - **Audio is never sent.** Voice clips are attached by the caregiver by hand.
 - **Demo packs stay fictional.** Mira and Raju keep their `demo` block. Never demonstrate this
   with a real person's photo.
@@ -911,8 +952,8 @@ in the review UI; they are the honest measure of how much the agent actually con
 
 ```ts
 agent: {
-  enabled: false,        // default OFF — every existing check passes untouched
-  provider: 'none',
+  enabled: false,          // default OFF — every existing check passes untouched
+  provider: 'none',        // 'none' | 'stub' | 'llama-cpp'
   model: '',
   promptVersion: 'f-1',
   consentGiven: false,
@@ -921,10 +962,21 @@ agent: {
 }
 ```
 
+`baseUrl` is deliberately **not** in this block. It is read from `.env` only, never
+persisted to `localStorage`, so a corrupted or tampered stored config has no way to
+express an off-machine endpoint at all.
+
 - With `enabled: false` the entire feature is inert and the app behaves exactly as at
   Checkpoint E. This is the shipped default.
-- Provider unreachable, key missing, rate-limited, malformed response, or timeout → a clear
-  caregiver-facing message and a fall back to manual authoring. Never a blocked UI.
+- Failure modes are the local ones — `server-unreachable` (llama-server is not running),
+  `model-not-loaded` (running, but started without `--mmproj`, so it cannot see),
+  `overloaded` (still loading weights, or every slot busy), `timeout`, and
+  `malformed-response`. There is no `no-key` or `bad-key`: nothing authenticates, because
+  nothing leaves the machine. Each maps to a clear caregiver-facing message — the
+  unreachable case prints the `llama-server` command to run — and a fall back to manual
+  authoring. Never a blocked UI.
+- Only `timeout` and `overloaded` are retried, exactly once. A server that is not running
+  will not start because it was asked twice.
 - `npm run check:offline` is unaffected, because no patient path touches the agent.
 - Manual pack authoring remains a first-class, fully supported route. The agent is an
   accelerator, never a dependency.
@@ -936,7 +988,7 @@ agent: {
 | Sub | Deliverable | Done when |
 | --- | --- | --- |
 | F1 | Tool layer + firewall + adversarial fixtures, **stub model** | `validateProposal` unit tests pass against the fixture set, including an injection case, with no network and no provider configured; all existing checks still green |
-| F2 | Real provider call, image pipeline, consent dialog | An upload produces real proposals; declining consent leaves the app at E behaviour; originals and EXIF never leave the machine, verified |
+| F2 | Local `llama-server` call, image pipeline, consent dialog | An upload produces real proposals from a locally-served 4-bit ~4B vision model; declining consent leaves the app at E behaviour; the adapter refuses a non-loopback endpoint, and originals and EXIF never leave the machine — both verified without a network |
 | F3 | Review UI, edit, commit, reject | A firewall rejection displays its rule id and offending token; committed pack loads and plays; an edited proposal commits the caregiver's text, not the model's |
 | F4 | Provenance, audit log, docs, checks | Provenance appears in pack and session export; `agent-audit.jsonl` written and git-ignored; `npm run check` covers the firewall with agent disabled |
 

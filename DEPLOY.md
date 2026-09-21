@@ -42,7 +42,12 @@ app. `agent.enabled` defaults to `false` (`src/agent/config.ts`), and nothing un
 `src/agent/` is imported from `main.ts` or anything else on the boot path — `npm run
 build`'s module count is unchanged by its presence (still 20 modules transformed as of
 this checkpoint; `grep -rl "from '\./agent" src/main.ts src/ui.ts` finds nothing). There
-is no environment variable to set for a production deploy: `VITE_AGENT_API_KEY` /
-`VITE_AGENT_MODEL` (`.env.example`) are read only by `src/agent/provider.ts`, which
+is no environment variable to set for a production deploy: `VITE_AGENT_BASE_URL` /
+`VITE_AGENT_MODEL` (`.env.example`) are read only by `src/agent/llamaCpp.ts`, which
 nothing calls yet. Do not set them on a hosting provider for this deployment — there is
-no code path that would read them, and no reason to hold a key there.
+no code path that would read them.
+
+There is also no secret to leak. Inference is local (SPEC.md §10.6): the agent talks to a
+`llama-server` on loopback, so there is no API key anywhere in this repository, nothing to
+configure on a host, and — since the adapter refuses a non-loopback `baseUrl` — no way for
+a deployed build to reach an inference endpoint even if one were configured.

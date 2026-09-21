@@ -4,7 +4,8 @@
  * `ProviderAdapter` a run actually talks to — every caller downstream only ever sees the
  * `ProviderAdapter` interface, real or stub.
  */
-import { AnthropicProviderAdapter, type ProviderAdapter, type ProviderRequest, type ProviderResult, type AnthropicProviderConfig } from './provider'
+import type { ProviderAdapter, ProviderRequest, ProviderResult } from './provider'
+import { LlamaCppProviderAdapter, type LlamaCppConfig } from './llamaCpp'
 import { StubModel, type StubModelScript } from './stubModel'
 import type { AgentConfig } from './config'
 
@@ -28,12 +29,12 @@ export class StubProviderAdapter implements ProviderAdapter {
  *  missing its key: this is the config saying "don't try." */
 export class NullProviderAdapter implements ProviderAdapter {
   async run(): Promise<ProviderResult> {
-    return { ok: false, reason: 'no-key', message: 'No provider is configured. Continue with manual authoring.' }
+    return { ok: false, reason: 'not-configured', message: 'No model is configured. Continue with manual authoring.' }
   }
 }
 
 export interface SelectProviderOptions {
-  anthropic?: AnthropicProviderConfig
+  llamaCpp?: LlamaCppConfig
   stubScript?: StubModelScript
 }
 
@@ -41,8 +42,8 @@ const EMPTY_STUB_SCRIPT: StubModelScript = { name: 'empty', calls: [] }
 
 export function selectProvider(config: AgentConfig, options: SelectProviderOptions = {}): ProviderAdapter {
   switch (config.provider) {
-    case 'anthropic':
-      return new AnthropicProviderAdapter({ model: config.model, ...options.anthropic })
+    case 'llama-cpp':
+      return new LlamaCppProviderAdapter({ model: config.model, maxCalls: config.maxProposalsPerRun, ...options.llamaCpp })
     case 'stub':
       return new StubProviderAdapter(options.stubScript ?? EMPTY_STUB_SCRIPT)
     case 'none':

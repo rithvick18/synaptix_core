@@ -85,7 +85,7 @@ first, so a switch or a replay can never blend two together; the file writes out
 ## Checks (SPEC.md §8)
 
 ```bash
-npm run check           # ~440 assertions, headless, no browser
+npm run check           # 767 assertions across 7 suites, headless, no browser
 npm run build && npm run check:offline   # ~90 assertions in a real browser, network off
 ```
 
@@ -219,15 +219,55 @@ offending token, never silently dropped. A prompt-injection attempt — rendered
 uploaded photo trying to add unrelated content — is caught the same structural way: the
 injected text is simply not in the caregiver's own allow-list, so F-a rejects it.
 
-**Consent and privacy.** The first real provider call is gated behind a one-time consent
-dialog (§10.6) naming exactly what is sent (a downscaled, EXIF-stripped "probe" copy of
-each photo) and what never is (original files, audio, telemetry). Declining leaves the
-app at exactly the behaviour it had before Checkpoint F existed. EXIF — GPS above all —
-is stripped before any derivative is produced (`src/agent/images.ts`): every derivative
-is a fresh canvas re-encode, never the uploaded bytes. `agent-audit.jsonl` (git-ignored)
-records that a call happened — timestamp, tool, asset id, byte count, model id, outcome —
-and is structurally incapable of holding image content or caregiver text, because its
+**The model runs on your machine.** Inference is llama.cpp's `llama-server` serving a
+4-bit quantised ~4B vision model over loopback — no hosted provider, no API key, no
+account. This is the difference between a privacy policy and a privacy property: patient
+photographs never leaving the device is not a promise about a third party's conduct, it
+is a fact about the network path. `LlamaCppProviderAdapter` refuses any `baseUrl` that
+does not resolve to loopback, before opening a socket, and the endpoint is read from
+`.env` only — never persisted to `localStorage` — so a tampered stored config cannot
+express an off-machine address at all.
+
+A small local model is weaker than a frontier hosted one and its proposals are rougher.
+That is an acceptable trade here, because the design already assumes the model is
+untrusted: every proposal passes the firewall and then a human before it can reach a
+patient. Accuracy buys convenience, not correctness.
+
+**Consent and privacy.** The first call is gated behind a one-time dialog (§10.6) naming
+what reads the photographs (a model on this computer), what it is shown (a downscaled,
+EXIF-stripped "probe" copy) and what it never is (originals, audio, telemetry — and
+nothing at all to the internet). With local inference this is a disclosure that a model
+reads the photographs, not consent to a transfer. Declining leaves the app at exactly the
+behaviour it had before Checkpoint F existed. EXIF — GPS above all — is stripped before
+any derivative is produced (`src/agent/images.ts`): every derivative is a fresh canvas
+re-encode, never the uploaded bytes. `agent-audit.jsonl` (git-ignored) records that a
+call happened — timestamp, tool, asset id, byte count, model id, outcome — and is
+structurally incapable of holding image content or caregiver text, because its
 `AuditEntry` type has no field wide enough to carry either.
+
+**Tool calls are constrained, not requested.** A 4B model asked politely for JSON will
+sometimes answer in prose, and Gemma-class chat templates carry no native tool-calling
+support to fall back on. So `AGENT_TOOL_SCHEMA` is compiled into a single JSON schema —
+an envelope whose `calls[]` items are a discriminated union over every tool, keyed by a
+`const` name — and passed as `response_format: { type: 'json_schema' }`. llama.cpp turns
+that into a GBNF grammar and enforces it during sampling, so the model *cannot* emit a
+token sequence outside the schema: `tool` is always a real tool, `args` always matches
+that tool's parameters, and `maxProposalsPerRun` is enforced by the sampler rather than
+by trimming an over-long list afterwards. It guarantees shape, not truth — which is
+still what the firewall is for.
+
+### Running the local model
+
+```bash
+llama-server -m gemma-3-4b-it-Q4_K_M.gguf \
+             --mmproj mmproj-gemma-3-4b-it-f16.gguf \
+             --port 8080
+```
+
+`--mmproj` is the vision projector; without it the model cannot see the photographs, and
+the adapter reports `model-not-loaded` with that flag named rather than failing opaquely.
+Copy `.env.example` to `.env` to point at a different port. With `agent.enabled: false`
+(the shipped default) none of this is read, and the app never looks for a server.
 
 **The deployed build ships with `agent.enabled: false`.** This is the default in
 `src/agent/config.ts`, and nothing under `src/agent/` is imported from `main.ts` — the
@@ -242,14 +282,18 @@ See DEPLOY.md's "The agent layer ships fully inert" section for how that is veri
   `src/agent/tokens.ts` (the caregiver-only allow-list builder), `src/agent/firewall.ts`
   (`validateProposal()`, rules F-a–F-i), `src/agent/stubModel.ts` (a scripted fake model
   for offline testing), and 27 adversarial fixtures in `src/agent/__fixtures__/`.
-- **F2 — provider, image pipeline, consent.** `src/agent/images.ts` (EXIF/GPS strip,
-  MIME/size validation, probe/texture/thumb derivatives — only `probe` is ever eligible
-  to leave the machine), `src/agent/provider.ts` (a single Anthropic adapter behind the
-  `ProviderAdapter` interface — timeout, retry-once, typed failure results for no-key,
-  bad-key, timeout, malformed response and rate-limiting), `src/agent/config.ts` (the
-  `AgentConfig` shape and the §10.6 consent gate), `src/agent/audit.ts`
-  (`agent-audit.jsonl` logging), and `src/agent/selectProvider.ts` (chooses stub vs. real
-  provider from config — stub stays the default in every test).
+- **F2 — local model, image pipeline, consent.** `src/agent/images.ts` (EXIF/GPS strip,
+  MIME/size validation, probe/texture/thumb derivatives — only `probe` is ever shown to
+  the model), `src/agent/provider.ts` (the `ProviderAdapter` seam — types only, no
+  inference runtime, so nothing that depends on it pulls one in),
+  `src/agent/llamaCpp.ts` (the only implementation: a local `llama-server` over loopback,
+  grammar-constrained tool calls, timeout, retry-once for the two genuinely transient
+  cases, and typed failures for `server-unreachable`, `model-not-loaded`, `overloaded`,
+  `timeout` and `malformed-response` — there is no `no-key` or `bad-key`, because nothing
+  authenticates), `src/agent/config.ts` (the `AgentConfig` shape and the §10.6 consent
+  gate), `src/agent/audit.ts` (`agent-audit.jsonl` logging), and
+  `src/agent/selectProvider.ts` (chooses stub vs. local model from config — stub stays
+  the default in every test).
 - **F3 — caregiver review and commit.** `src/agent/review.ts` (`ReviewSession`: firewall
   on arrival, `request_caregiver_input` answers widen the allow-list and re-validate,
   `edit()` and `commit()` re-run the firewall independently — a proposal can only reach
