@@ -5,3 +5,9 @@ dist
 graphify-out/.graphify_python
 graphify-out/.graphify_root
 graphify-out/cache/
+
+# Checkpoint F — agent-assisted caregiver setup (SPEC.md §10.6, local dev only)
+.env
+.env.*
+!.env.example
+agent-audit.jsonl

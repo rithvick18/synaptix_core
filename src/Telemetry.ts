@@ -444,6 +444,10 @@ export interface ExportContext {
   attemptNumber: number
   /** How many times this page-load restarted before the session being exported. */
   restarts: number
+  /** SPEC.md §10.8 — carried straight from the active pack's own `provenance` field
+   *  when it has one (type-only import: erased at build time). Session telemetry
+   *  itself (§4.4) is unchanged either way — this is purely passed through. */
+  provenance?: import('./agent/provenance').ProvenanceBlock
 }
 
 export interface ExportDocument {
@@ -477,6 +481,9 @@ export interface ExportDocument {
   summary: Summary
   dwellByObject: DwellTotal[]
   events: Event[]
+  /** SPEC.md §10.8. Absent for a hand-authored or caregiver-editor pack — present only
+   *  when the played pack was agent-assisted and the caregiver confirmed it on commit. */
+  provenance?: import('./agent/provenance').ProvenanceBlock
 }
 
 export function buildExport(events: readonly Event[], context: ExportContext): ExportDocument {
@@ -512,7 +519,8 @@ export function buildExport(events: readonly Event[], context: ExportContext): E
     },
     summary,
     dwellByObject: dwellByObject(events),
-    events: [...events]
+    events: [...events],
+    ...(context.provenance !== undefined ? { provenance: context.provenance } : {})
   }
 }
 

@@ -187,31 +187,87 @@ See `DEPLOY.md` for the exact commands.
 
 An optional, setup-time authoring assistant that turns a caregiver's uploads and typed
 notes into proposed pack content, which a caregiver must review and commit by hand before
-anything reaches a patient session. **No model call ever occurs while a patient session is
-running** — the agent is inert during play, full stop.
+anything reaches a patient session.
 
-**Checkpoint F1 (this repository, so far) ships the tool layer and the firewall only.**
-There is no provider wired, no network call, no UI, and `agent.enabled` is not even
-present as a runtime toggle yet — none of this is reachable from the app:
+**What it does.** Reads a caregiver's uploads and typed notes through a small, fixed set
+of read tools (`list_rooms`, `list_anchors`, `get_caregiver_text`, …), and proposes pack
+content — a photo placement, a person, a navigate/find/recall step, a level — through an
+equally fixed set of proposal tools. Every proposal is checked by a pure content firewall
+before the caregiver ever sees it, and checked again the moment they try to commit it.
 
-- `src/agent/tools.ts` — the §10.2 read and proposal tool contracts, typed, plus the
-  JSON schema a model's function-calling API would be given. `commitProposal` and
-  `rejectProposal` are UI-only and are absent from that schema on purpose: a model cannot
-  reach them, directly or indirectly.
-- `src/agent/tokens.ts` — builds the caregiver-only token allow-list a proposal's text is
-  checked against. Nothing derived from an image contributes a token.
-- `src/agent/firewall.ts` — `validateProposal()`, the §10.3 content firewall (rules F-a
-  through F-i). A pure, synchronous function with no side effects and no model in the
-  loop, run against every proposal.
-- `src/agent/stubModel.ts` — a fake model that replays a scripted sequence of tool calls
-  from a fixture, so the whole propose → firewall pipeline is testable with zero network
-  access and no provider configured.
-- `src/agent/__fixtures__/` — 27 fixtures covering every firewall rule plus a
-  prompt-injection case, run in `npm run check`.
+**What it is forbidden from doing.**
+- **No model call ever occurs while a patient session is running.** The agent is a
+  setup-time authoring assistant only; a patient session is byte-for-byte deterministic
+  given the same pack, exactly as before this checkpoint existed.
+- **The agent cannot commit its own proposals.** `commitProposal` / `rejectProposal` are
+  UI-only actions, reachable only from a caregiver's own click — they are absent from the
+  JSON schema handed to any model, so there is no path, direct or indirect, from a tool
+  call to a change a patient will see.
+- **The agent cannot introduce a fact.** It may describe an image's *visual* properties
+  (orientation, brightness, whether it suits a portrait vs. a wall anchor) but never an
+  *autobiographical* one (who someone is, when or where a photo was taken, what it
+  depicts) — see SPEC.md §10.4. Any attempt to smuggle an invented name, date, place, or
+  hedge ("probably your daughter") past the caregiver is rejected by the firewall, not by
+  asking the model nicely.
 
-Building the firewall before any provider is wired means the safety property — that the
-agent cannot smuggle an invented fact past the caregiver — is testable without spending a
-token, and the expensive path is never the thing being debugged.
+**The firewall's role.** `src/agent/firewall.ts`'s `validateProposal()` is a pure,
+synchronous function — no network, no model, no side effects — checked against rules
+F-a through F-i (unmentioned people, invented dates/places, broken answer/choice
+membership, ids the world doesn't have, a mismatched photo/anchor pairing, hedged or
+clinical language). A rejection is shown to the caregiver with the exact rule id and the
+offending token, never silently dropped. A prompt-injection attempt — rendered text in an
+uploaded photo trying to add unrelated content — is caught the same structural way: the
+injected text is simply not in the caregiver's own allow-list, so F-a rejects it.
 
-Later checkpoints (F2–F4, not yet built) add a real provider call and the image pipeline,
-the caregiver review UI, and provenance reporting in the pack and session export.
+**Consent and privacy.** The first real provider call is gated behind a one-time consent
+dialog (§10.6) naming exactly what is sent (a downscaled, EXIF-stripped "probe" copy of
+each photo) and what never is (original files, audio, telemetry). Declining leaves the
+app at exactly the behaviour it had before Checkpoint F existed. EXIF — GPS above all —
+is stripped before any derivative is produced (`src/agent/images.ts`): every derivative
+is a fresh canvas re-encode, never the uploaded bytes. `agent-audit.jsonl` (git-ignored)
+records that a call happened — timestamp, tool, asset id, byte count, model id, outcome —
+and is structurally incapable of holding image content or caregiver text, because its
+`AuditEntry` type has no field wide enough to carry either.
+
+**The deployed build ships with `agent.enabled: false`.** This is the default in
+`src/agent/config.ts`, and nothing under `src/agent/` is imported from `main.ts` — the
+production bundle's module count is identical with or without this directory present.
+See DEPLOY.md's "The agent layer ships fully inert" section for how that is verified.
+
+<details>
+<summary>What's built, checkpoint by checkpoint</summary>
+
+- **F1 — tool layer and firewall, no provider.** `src/agent/tools.ts` (the §10.2 tool
+  contracts and JSON schema — `commitProposal`/`rejectProposal` absent by construction),
+  `src/agent/tokens.ts` (the caregiver-only allow-list builder), `src/agent/firewall.ts`
+  (`validateProposal()`, rules F-a–F-i), `src/agent/stubModel.ts` (a scripted fake model
+  for offline testing), and 27 adversarial fixtures in `src/agent/__fixtures__/`.
+- **F2 — provider, image pipeline, consent.** `src/agent/images.ts` (EXIF/GPS strip,
+  MIME/size validation, probe/texture/thumb derivatives — only `probe` is ever eligible
+  to leave the machine), `src/agent/provider.ts` (a single Anthropic adapter behind the
+  `ProviderAdapter` interface — timeout, retry-once, typed failure results for no-key,
+  bad-key, timeout, malformed response and rate-limiting), `src/agent/config.ts` (the
+  `AgentConfig` shape and the §10.6 consent gate), `src/agent/audit.ts`
+  (`agent-audit.jsonl` logging), and `src/agent/selectProvider.ts` (chooses stub vs. real
+  provider from config — stub stays the default in every test).
+- **F3 — caregiver review and commit.** `src/agent/review.ts` (`ReviewSession`: firewall
+  on arrival, `request_caregiver_input` answers widen the allow-list and re-validate,
+  `edit()` and `commit()` re-run the firewall independently — a proposal can only reach
+  "accepted"/"edited" status through a passing check at commit time), `src/agent/
+  commitPack.ts` (folds committed proposals into a draft pack using the **existing**
+  §4.1 schema — proven, in `npm run check`, to load through `MemoryPack.ts`'s unmodified
+  §4.2 validator), and `src/agent/setupUI.ts` (the review list, crop-drag handles, and
+  the consent dialog — plain DOM, not yet wired to an entry point in `main.ts`).
+- **F4 — provenance, docs, checks.** `src/agent/provenance.ts` computes the §10.8 block
+  (`accepted`/`edited`/`rejected`/`firewallRejected`/`caregiverInputRequests`) straight
+  from `ReviewSession` state; it's an optional field on `MemoryPack` and on `Telemetry.ts`'s
+  `ExportContext`/`ExportDocument` (type-only imports, erased at build time — zero
+  runtime coupling), so an agent-assisted pack's session export carries it and a
+  hand-authored pack's export is untouched. `npm run check` covers all of it — the
+  firewall and token builder explicitly re-checked under `DEFAULT_AGENT_CONFIG`
+  (`enabled: false`) to prove they don't change behaviour based on it.
+
+None of F1–F4 touches the patient play path or the §9 editor, and `agent.enabled` stays
+`false` throughout — this whole layer is present in the repository and fully inert.
+
+</details>

@@ -1,15 +1,22 @@
 /**
  * Headless checks for Checkpoint F1 — the agent scaffolding. No provider, no network:
  * this file only exercises `src/agent/tools.ts`, `src/agent/tokens.ts`,
- * `src/agent/firewall.ts` and `src/agent/stubModel.ts` against fixtures. `agent.enabled`
- * is never read here because F1 has no config wiring yet — the check proves the firewall
- * is correct as a pure function, independent of whether the feature is ever turned on.
+ * `src/agent/firewall.ts` and `src/agent/stubModel.ts` against fixtures.
+ *
+ * Checkpoint F4 added the section at the bottom, which explicitly loads
+ * `DEFAULT_AGENT_CONFIG` (`enabled: false`, the shipped default) and re-runs the
+ * firewall and token builder under it — proving §10.9's "the entire feature is inert"
+ * is true of the actual functions, not just asserted in a comment. The firewall itself
+ * takes no config (it is a pure function of a proposal and a context — §10.3), so
+ * "with the agent disabled" here means: these results do not change based on
+ * `agent.enabled`, because nothing in the call ever reads it.
  */
 import { AGENT_TOOL_SCHEMA } from '../../src/agent/tools'
 import { validateProposal } from '../../src/agent/firewall'
 import { buildAllowedTokens } from '../../src/agent/tokens'
 import { StubModel, type StubModelScript } from '../../src/agent/stubModel'
 import { PROPOSAL_FIXTURES } from '../../src/agent/__fixtures__/proposals.fixtures'
+import { DEFAULT_AGENT_CONFIG } from '../../src/agent/config'
 
 let checks = 0
 const failures: string[] = []
@@ -149,6 +156,23 @@ for (const rule of ['F-a', 'F-b', 'F-c', 'F-d', 'F-e', 'F-f', 'F-g', 'F-h', 'F-i
     results.every((r) => typeof r.proposalId === 'string' && r.proposalId.length > 0),
     'stubModel: every result carries a proposal id'
   )
+}
+
+// ---------------------------------------------------------------------------
+// 6. §10.9 — the shipped default is `enabled: false`, and the firewall/tokens are
+//    unaffected by it either way (Checkpoint F4)
+// ---------------------------------------------------------------------------
+
+{
+  eq(DEFAULT_AGENT_CONFIG.enabled, false, '§10.9 default config: enabled is false — the shipped default')
+  eq(DEFAULT_AGENT_CONFIG.consentGiven, false, '§10.9 default config: no consent is pre-granted')
+
+  const fixture = PROPOSAL_FIXTURES.find((f) => f.name.startsWith('F-a:'))!
+  const withAgentDisabled = validateProposal(fixture.proposal, fixture.context)
+  eq(withAgentDisabled.ok, fixture.expectOk, '§10.9 firewall: unaffected by agent.enabled — same result with the agent off')
+
+  const tokensWithAgentDisabled = buildAllowedTokens({ texts: ['Ananya visited.'], fields: [] })
+  ok(tokensWithAgentDisabled.has('Ananya'), '§10.9 tokens: the builder works identically whether or not agent.enabled is true')
 }
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@
     "check:profile": "node tools/profile-check.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0",
     "three": "0.181.2"
   },
   "devDependencies": {

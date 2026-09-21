@@ -34,3 +34,15 @@ netlify deploy --prod --dir=dist
 - The build fetches Poly Haven textures and the HDRI at runtime from
   `dl.polyhaven.org` (CORS-open). If the host adds a restrictive Content-Security-Policy,
   allow that origin — or leave it blocked and the §1.1 fallback takes over.
+
+## The agent layer ships fully inert (SPEC.md §10)
+
+Checkpoint F (`src/agent/`) is in this repository but is not reachable from the deployed
+app. `agent.enabled` defaults to `false` (`src/agent/config.ts`), and nothing under
+`src/agent/` is imported from `main.ts` or anything else on the boot path — `npm run
+build`'s module count is unchanged by its presence (still 20 modules transformed as of
+this checkpoint; `grep -rl "from '\./agent" src/main.ts src/ui.ts` finds nothing). There
+is no environment variable to set for a production deploy: `VITE_AGENT_API_KEY` /
+`VITE_AGENT_MODEL` (`.env.example`) are read only by `src/agent/provider.ts`, which
+nothing calls yet. Do not set them on a hosting provider for this deployment — there is
+no code path that would read them, and no reason to hold a key there.

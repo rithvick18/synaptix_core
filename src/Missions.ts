@@ -125,6 +125,10 @@ export interface MemoryPack {
   anchors: Record<string, string>
   missions: Mission[]
   demo?: DemoNotice
+  /** SPEC.md §10.8 — set on commit by the (still-inert, `agent.enabled: false`) agent
+   *  layer. Absent on every hand-authored or caregiver-editor pack. Type-only import:
+   *  erased at build time, so this carries no runtime dependency on `src/agent/`. */
+  provenance?: import('./agent/provenance').ProvenanceBlock
 }
 
 // ---------------------------------------------------------------------------
