@@ -1,3 +1,6 @@
+import { environmentEditor } from '../src/EnvironmentEditor'
+import { styleMaterial } from '../src/EnvironmentMaterials'
+import * as THREE from 'three'
 import { newProfile, newId, profileStore, profileErrors, profilePack, type Question } from '../src/LocalProfile'
 import { importPhoto, dimensions, cropRect, MediaResolver } from '../src/PhotoMedia'
 
@@ -37,6 +40,27 @@ export async function run(): Promise<{ checks: string[]; id: string }> {
   const rect = cropRect(120, 180, .95 / .7, replacement.crop)
   ok(Math.abs(rect[2] / rect[3] - .95 / .7) < .00001 && rect[0] >= 0 && rect[1] >= 0, 'crop fits correct destination without stretching')
   const p = newProfile(); p.name = 'Browser fixture'; p.wall = replacement
+  const realFetch = window.fetch
+  let generationTask: Promise<void> = Promise.resolve()
+  const editor = environmentEditor(p, action => { generationTask = action(); return generationTask })
+  const style = { wall: '#228844', floor: '#bb9977', wood: '#665544', fabric: '#445566', accent: '#aa4422', floorType: 'tile', light: 'cool' }
+  try {
+    window.fetch = async (_url, init) => {
+      const request = JSON.parse(String(init?.body))
+      ok(request.messages[1].content[0].image_url.url.startsWith('data:image/jpeg;base64,'), 'room upload is re-encoded before inference')
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ calls: [{ tool: 'set_environment', args: style }] }) } }] }))
+    }
+    const input = editor.querySelector<HTMLInputElement>('input[type=file]')!
+    const transfer = new DataTransfer(); transfer.items.add(new File([await image(160, 100)], 'room.png', { type: 'image/png' }))
+    input.files = transfer.files; input.dispatchEvent(new Event('change'))
+    editor.querySelector<HTMLButtonElement>('[data-generate]')!.click(); await generationTask
+    ok(p.environment?.wall === style.wall, 'Generate applies vision response to profile')
+    const mat = new THREE.MeshStandardMaterial()
+    styleMaterial(mat, 'tileFloor', p.environment!)
+    ok(mat.map instanceof THREE.CanvasTexture && mat.color.getHexString() === 'bb9977', 'generated floor pattern and colour reach real Three material')
+    mat.map?.dispose(); mat.dispose()
+  } finally { window.fetch = realFetch }
+
   ok(profileErrors(p).length === 0, 'image-only profile valid with explicit skip')
   p.skipRecall = false
   ok(profileErrors(p).length === 2, 'recall requires questions in levels one and three')
@@ -66,6 +90,7 @@ export async function run(): Promise<{ checks: string[]; id: string }> {
   await profileStore.save(p)
   let restored = await profileStore.read()
   ok(restored.selected === p.id && restored.profile?.wall?.original instanceof Blob && restored.profile.wall.crop.x === .2, 'IndexedDB restores selection original and crop')
+  ok(restored.profile?.environment?.wall === style.wall, 'IndexedDB restores generated environment')
   // Force a real transaction abort after queuing writes; old commit must survive.
   const put = IDBObjectStore.prototype.put
   IDBObjectStore.prototype.put = function(...args: Parameters<IDBObjectStore['put']>) { const request = put.apply(this, args); this.transaction.abort(); return request }

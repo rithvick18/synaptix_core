@@ -1,3 +1,5 @@
+import type { EnvironmentStyle } from './agent/environment'
+import { styleMaterial } from './EnvironmentMaterials'
 import * as THREE from 'three'
 import {
   ARCHES,
@@ -164,7 +166,7 @@ function scaleBoxUV(geo: THREE.BufferGeometry, sx: number, sy: number, sz: numbe
 
 class Materials {
   private cache = new Map<Surface, THREE.MeshStandardMaterial>()
-  constructor(private sets: Map<Surface, MapTriplet | null>) {}
+  constructor(private sets: Map<Surface, MapTriplet | null>, private style?: EnvironmentStyle) {}
 
   get(surface: Surface): THREE.MeshStandardMaterial {
     let m = this.cache.get(surface)
@@ -183,11 +185,13 @@ class Materials {
       // Tint multiplies into the map; plain white left the plaster a cold grey.
       m.color.set(surface === 'wall' ? 0xf4ead9 : 0xffffff)
     }
+    if (this.style) styleMaterial(m, surface, this.style)
     this.cache.set(surface, m)
     return m
   }
 
   tileOf(surface: Surface): number | null {
+    if (this.style && (surface === 'woodFloor' || surface === 'tileFloor')) return this.style.floorType === 'tile' ? 0.8 : 2
     return this.sets.get(surface) ? (TEXTURE_SET[surface]?.tile ?? null) : null
   }
 }
@@ -840,7 +844,8 @@ export function auditReachability(
 // ---------------------------------------------------------------------------
 
 export async function createProceduralHouse(
-  onProgress?: StageProgress
+  onProgress?: StageProgress,
+  environment?: EnvironmentStyle
 ): Promise<{ world: WorldSource; report: HouseBuildReport }> {
   const root = new THREE.Group()
   root.name = 'proceduralHouse'
@@ -888,7 +893,7 @@ export async function createProceduralHouse(
   // audits below take visible time on a slow machine and silence looks like a hang.
   onProgress?.('house', 0, 0, 0)
 
-  const mats = new Materials(sets)
+  const mats = new Materials(sets, environment)
   const blockers: THREE.Box3[] = []
 
   // ---- Ground, floors, ceilings ----
@@ -933,7 +938,7 @@ export async function createProceduralHouse(
     for (const off of offsets) {
       const lx = along === 'x' ? cx + off : cx
       const lz = along === 'z' ? cz + off : cz
-      const spot = new THREE.SpotLight(0xffeccd, 26, 9, 1.15, 0.6, 1.4)
+      const spot = new THREE.SpotLight(environment?.light === 'cool' ? 0xdceaff : environment?.light === 'neutral' ? 0xffffff : 0xffeccd, 26, 9, 1.15, 0.6, 1.4)
       spot.position.set(lx, CEILING_HEIGHT - 0.12, lz)
       spot.target.position.set(lx, 0, lz)
       spot.castShadow = true

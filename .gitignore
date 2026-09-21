@@ -11,3 +11,6 @@ graphify-out/cache/
 .env.*
 !.env.example
 agent-audit.jsonl
+
+# Local vision model weights
+models/

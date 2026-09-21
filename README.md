@@ -259,20 +259,21 @@ still what the firewall is for.
 ### Running the local model
 
 ```bash
-llama-server -m gemma-3-4b-it-Q4_K_M.gguf \
-             --mmproj mmproj-gemma-3-4b-it-f16.gguf \
-             --port 8080
+llama-server -m models/gemma-3-4b/gemma-3-4b-it-Q4_K_M.gguf \
+             --mmproj models/gemma-3-4b/mmproj-model-f16.gguf \
+             --host 127.0.0.1 --port 8080 --ctx-size 8192 --parallel 1 \
+             --alias local --cors-origins http://localhost:5173
 ```
 
 `--mmproj` is the vision projector; without it the model cannot see the photographs, and
 the adapter reports `model-not-loaded` with that flag named rather than failing opaquely.
-Copy `.env.example` to `.env` to point at a different port. With `agent.enabled: false`
-(the shipped default) none of this is read, and the app never looks for a server.
+Copy `.env.example` to `.env` to point at a different port. The room-environment
+generator reads these settings when Generate is clicked; it does not depend on the older
+pack-authoring assistant’s `agent.enabled` flag.
 
-**The deployed build ships with `agent.enabled: false`.** This is the default in
-`src/agent/config.ts`, and nothing under `src/agent/` is imported from `main.ts` — the
-production bundle's module count is identical with or without this directory present.
-See DEPLOY.md's "The agent layer ships fully inert" section for how that is verified.
+**The older pack-authoring assistant ships with `agent.enabled: false`.** This is the default in
+`src/agent/config.ts`, and is separate from the active room-environment generator described below.
+
 
 <details>
 <summary>What's built, checkpoint by checkpoint</summary>
@@ -311,7 +312,24 @@ See DEPLOY.md's "The agent layer ships fully inert" section for how that is veri
   firewall and token builder explicitly re-checked under `DEFAULT_AGENT_CONFIG`
   (`enabled: false`) to prove they don't change behaviour based on it.
 
-None of F1–F4 touches the patient play path or the §9 editor, and `agent.enabled` stays
-`false` throughout — this whole layer is present in the repository and fully inert.
+The pack-proposal review workflow remains inactive. The room-environment generator reuses the local vision provider and image pipeline directly from Personalise Home.
 
 </details>
+
+## Generate a home appearance from room photos
+
+Open **Personalise Home**, select one to three room reference images, optionally add
+visual preferences, and click **Generate environment from photos**. Review or edit the
+colour swatches, then **Save and Play**. The local vision model reads downscaled,
+metadata-free copies and produces a validated environment description. Wall paint,
+floor colour and procedural wood/tile/carpet patterns, wood and upholstery colours,
+accents, and indoor lighting change in the playable house. Settings persist in IndexedDB
+and reload without inference. Reset environment restores the default appearance.
+
+This is appearance matching within the existing house, not photogrammetry: floor plan,
+furniture shapes and placement remain fixed. Generation requires a running vision-capable
+llama-server with a matching projector (see Running the local model above). The default
+endpoint is `http://127.0.0.1:8080`; `.env.example` contains overrides. No inference runs
+until Generate is clicked. Failure keeps the previous environment and shows a retry/setup
+message. Reference uploads are held only for this editor session; the generated style is
+saved. Browser CORS/local-network permissions must allow the app to reach llama-server.

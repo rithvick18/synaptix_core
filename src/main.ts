@@ -147,7 +147,7 @@ async function boot(): Promise<void> {
 
   // Both downloads are optional by contract (§1.1); neither can fail the boot.
   const [{ world, report }, envReport] = await Promise.all([
-    createProceduralHouse(progress),
+    createProceduralHouse(progress, activeProfile?.environment),
     renderer.setupEnvironment(progress)
   ])
   assertWorldContract(world)

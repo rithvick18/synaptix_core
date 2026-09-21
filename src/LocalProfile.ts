@@ -1,3 +1,4 @@
+import type { EnvironmentStyle } from './agent/environment'
 import type { MemoryPack, RecallStep } from './Missions'
 
 export interface Crop { x: number; y: number; zoom: number }
@@ -33,6 +34,8 @@ export interface LocalProfile {
   wall?: Photo
   event?: Photo
   caption: string
+  environment?: EnvironmentStyle
+  environmentModel?: string
   people: LocalPerson[]
   questions: Question[]
 }
