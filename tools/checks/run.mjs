@@ -14,6 +14,8 @@
  *
  *   npm run check              # both suites
  *   npm run check -- pack      # just the ones whose name contains "pack"
+ *   node tools/checks/run.mjs --capture   # runs `*.capture.ts` instead: writes the
+ *                                         # §11.6 world snapshot, asserts nothing
  */
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
@@ -24,12 +26,13 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '..', '..')
 const filter = process.argv.slice(2).filter((a) => !a.startsWith('-'))
+const suffix = process.argv.includes('--capture') ? '.capture.ts' : '.check.ts'
 
 const esbuild = path.join(root, 'node_modules', '.bin', 'esbuild')
 const three = path.join(root, 'node_modules', 'three', 'build', 'three.module.js')
 
 const checks = readdirSync(here)
-  .filter((f) => f.endsWith('.check.ts'))
+  .filter((f) => f.endsWith(suffix))
   .filter((f) => filter.length === 0 || filter.some((needle) => f.includes(needle)))
   .sort()
 
