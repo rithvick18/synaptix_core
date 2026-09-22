@@ -93,6 +93,8 @@ const post = (id: string, x: number, z: number): SolidSpec => ({
 
 export const courtyard: Template = {
   id: 'courtyard',
+  name: 'Courtyard',
+  description: 'Rooms on two sides of an open courtyard, joined by a covered verandah.',
   version: 1,
 
   rooms: [

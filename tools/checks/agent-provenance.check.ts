@@ -69,7 +69,8 @@ resetProposalIds()
   ]
   const baseContext = {
     patientId: 'mira', levelId: 'water', levelIndex: 0, levelTitle: 'A glass of water',
-    attemptId: 'attempt-1', attemptNumber: 1, restarts: 0
+    attemptId: 'attempt-1', attemptNumber: 1, restarts: 0,
+    world: { templateId: 'hallway', mirrored: false, templateVersion: 1 }
   }
   const withoutProvenance = buildExport(events, baseContext)
   const provenance = computeProvenance({ accepted: 3, edited: 1, rejected: 0, firewallRejected: 2, caregiverInputRequests: 4 }, 'claude-opus-5', 'f-1')

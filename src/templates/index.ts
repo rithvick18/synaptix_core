@@ -41,3 +41,30 @@ export function templateFromLocation(search: string): TemplateSelection {
   }
   return { template: TEMPLATES[id ?? DEFAULT_TEMPLATE_ID], mirror, problem: null }
 }
+
+/** §11.7 — what a local profile stores about its house. */
+export interface HouseChoice {
+  templateId: string
+  mirrored: boolean
+}
+
+export const DEFAULT_HOUSE: Readonly<HouseChoice> = { templateId: DEFAULT_TEMPLATE_ID, mirrored: false }
+
+/**
+ * Which house to build. `?template=` wins over everything, as a dev override (§11.7).
+ * Otherwise a local profile gets the layout the caregiver chose, and a demo pack — no
+ * profile — gets `templateFromLocation`'s answer, which is the default house unless the
+ * URL says otherwise. A stored id that is no longer registered falls back the same way
+ * an unknown `?template=` does.
+ */
+export function houseFor(search: string, profile: HouseChoice | undefined): TemplateSelection {
+  if (!profile || new URLSearchParams(search).has('template')) return templateFromLocation(search)
+  if (!Object.hasOwn(TEMPLATES, profile.templateId)) {
+    return {
+      template: TEMPLATES[DEFAULT_TEMPLATE_ID],
+      mirror: false,
+      problem: `the saved profile's layout "${profile.templateId}" is not a registered template; using ${DEFAULT_TEMPLATE_ID}`
+    }
+  }
+  return { template: TEMPLATES[profile.templateId], mirror: profile.mirrored, problem: null }
+}

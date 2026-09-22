@@ -1,5 +1,6 @@
 import type { EnvironmentStyle } from './agent/environment'
 import type { MemoryPack, RecallStep } from './Missions'
+import { DEFAULT_HOUSE, TEMPLATES } from './templates'
 
 export interface Crop { x: number; y: number; zoom: number }
 export interface Photo {
@@ -36,17 +37,21 @@ export interface LocalProfile {
   caption: string
   environment?: EnvironmentStyle
   environmentModel?: string
+  /** §11.7 — the caregiver's chosen house layout. Never set by the §10 agent. */
+  templateId: string
+  mirrored: boolean
   people: LocalPerson[]
   questions: Question[]
 }
 export const newId = (): string => crypto.randomUUID()
 export function newProfile(): LocalProfile {
   return { version: 1, id: newId(), name: '', quality: 2048, skipRecall: true,
-    wallId: newId(), eventId: newId(), caption: '', people: [], questions: [] }
+    wallId: newId(), eventId: newId(), caption: '', ...DEFAULT_HOUSE, people: [], questions: [] }
 }
 export function profileErrors(p: LocalProfile): string[] {
   const errors: string[] = []
   if (!p.name.trim()) errors.push('Enter a profile display name.')
+  if (!Object.hasOwn(TEMPLATES, p.templateId)) errors.push('Choose a layout for the home.')
   for (const person of p.people) {
     if (!person.name.trim() || !person.relationship.trim()) errors.push('Every portrait needs a person name and relationship entered by you.')
   }
@@ -99,6 +104,16 @@ export function photosOf(p: LocalProfile): Photo[] {
   return [p.wall, p.event, ...p.people.map(v => v.photo)].filter((v): v is Photo => !!v)
 }
 
+/**
+ * §11.7 — a profile saved before the layout picker existed has no house fields; it gets
+ * the defaults, `hallway` unmirrored, which is the house it was always played in. A
+ * stored id that is no longer registered is kept as stored here and falls back at boot
+ * (`houseFor`), so the editor shows the problem instead of silently rewriting it.
+ */
+function withHouse(p: LocalProfile): LocalProfile {
+  return { ...p, templateId: typeof p.templateId === 'string' ? p.templateId : DEFAULT_HOUSE.templateId, mirrored: p.mirrored === true }
+}
+
 // A transaction replaces the complete profile and selection together. An abort leaves
 // the previous version intact, including originals. No localStorage or base64 media.
 const DB = 'memoria-caregiver-v1'
@@ -124,7 +139,7 @@ async function transaction<T>(mode: IDBTransactionMode, work: (store: IDBObjectS
 export const profileStore = {
   read: (): Promise<{ profile?: LocalProfile; selected?: string }> => transaction('readonly', (store, result) => {
     const p = store.get('local'), s = store.get('selected')
-    s.onsuccess = () => result({ profile: p.result, selected: s.result })
+    s.onsuccess = () => result({ profile: p.result ? withHouse(p.result) : undefined, selected: s.result })
   }),
   save: (profile: LocalProfile): Promise<void> => transaction('readwrite', store => {
     store.put(profile, 'local'); store.put(profile.id, 'selected')

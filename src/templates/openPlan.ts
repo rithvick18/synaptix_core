@@ -79,6 +79,8 @@ const OPENINGS: OpeningSpec[] = [
 
 export const openPlan: Template = {
   id: 'openPlan',
+  name: 'Open plan',
+  description: 'The living room and kitchen share one open space split by a counter, with the bedroom and bathroom off it.',
   version: 1,
 
   // The foyer sits inside both halves' boxes, so it is declared first: `roomOf` takes

@@ -17,6 +17,12 @@ front door with **E**, and walk in. The kitchen, bedroom and bathroom doors open
 way; the living room is reached through an open arch, and a second arch connects it
 directly to the kitchen.
 
+That is the default layout, `hallway`, and the Mira and Raju demos always use it. A
+caregiver's own profile can use any of four layouts — `hallway`, `row`, `openPlan`,
+`courtyard` — each optionally flipped left to right, chosen under **Choose your home's
+layout** in Personalise Home (SPEC.md §11). Changing the layout leaves photographs, people
+and questions untouched. `?template=<id>&mirror=1` overrides the layout for development.
+
 ## The three levels (SPEC.md §4.5)
 
 Choose one from the level-selection screen; all three are always available.
@@ -83,7 +89,9 @@ they are in `summary.steps[]` in the export.
 **Download JSON** on that card — or `J` at any moment — writes
 `memoria-<patient>-<level>-<timestamp>.json` containing the level (id, index, title), the
 attempt id and number, the pack id, the summary, per-step measures, dwell totals and the
-full event log, with the not-diagnostic label repeated inside the file.
+full event log, with the not-diagnostic label repeated inside the file. It also carries
+`world: { templateId, mirrored, templateVersion }`, the house the attempt was played in.
+Attempts are comparable only when all three match (SPEC.md §11.8).
 
 **One file describes one attempt at one level.** Starting any attempt empties the log
 first, so a switch or a replay can never blend two together; the file writes out
@@ -94,6 +102,7 @@ first, so a switch or a replay can never blend two together; the file writes out
 ```bash
 npm run check           # 993 assertions across 9 counted suites, headless, no browser
 npm run build && npm run check:offline   # ~90 assertions in a real browser, network off
+npm run build && npm run check:profile   # caregiver profile, layout picker and exports, headless Chrome
 ```
 
 `npm run check` typechecks `tools/checks/*.check.ts` against `src/` and then runs each

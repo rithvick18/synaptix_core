@@ -69,6 +69,8 @@ const OPENINGS: OpeningSpec[] = [
 
 export const row: Template = {
   id: 'row',
+  name: 'Rooms in a row',
+  description: 'Front room, living room and kitchen one behind another, with a side passage to the bedroom and bathroom.',
   version: 1,
 
   rooms: [

@@ -674,7 +674,8 @@ text, and that fallback remains in force when hints reduce the choices.
 IndexedDB database `memoria-caregiver-v1`, object store `profiles`, holds the complete
 local profile under `local` and the selected profile ID under `selected`. Original,
 runtime and thumbnail media are Blobs, never base64 or localStorage entries. A single
-read/write transaction commits metadata, crop settings, media and selection atomically.
+read/write transaction commits metadata, crop settings, media, the §11.7 house layout
+(`templateId`, `mirrored`) and selection atomically.
 An aborted or quota-failed save leaves the last successfully committed profile intact;
 the editor keeps the draft and displays a retryable failure. A storage read failure
 is reported on the level screen while demo play remains available.
@@ -689,6 +690,7 @@ questions, answers as prose, captions, photographs and object URLs. They contain
 profile/person/memory IDs and question IDs mapped to their content IDs and step indices,
 plus the existing per-step events and outcomes. Answer events contain stable choice IDs.
 Bundled demo exports retain their existing format, including fictional patient name.
+Every export, demo or local, also carries §11.8's `world` block (see §11.10, G3-2).
 
 ### Reproducible checks and manual acceptance
 
@@ -704,7 +706,8 @@ Bundled demo exports retain their existing format, including fictional patient n
 - `npm run check:offline`: production build, network disabled, all three demo levels,
   hints/outcomes/session isolation and interactable reachability.
 
-Manual walkthrough: Personalise Home → enter a display name → upload wall, person and
+Manual walkthrough: Personalise Home → enter a display name → choose the home's layout
+(§11.7), optionally flipped → upload wall, person and
 optional event photographs → preview and position each crop → keep Skip personalised
 recall on (or supply validated questions) → Save and Play → play levels 1–3 → refresh →
 L / Edit Profile to confirm photographs and crops persist → Use Demo Profile — Mira
@@ -718,6 +721,13 @@ assertions passed. The profile browser harness covers 40 checks, including all t
 personal levels with explicit recall and sticky late-image fallback. The graphify audit
 in `graphify-out/` describes the pre-change baseline, with its extraction gaps and
 unavailable token usage disclosed in `GRAPH_REPORT.md`; it is marked for update.
+
+*Superseded by G3 (2026-09-23):* `npm run check:profile` was failing before G3 began — at
+`43b667f` it stopped in the environment Generate step, because the harness never chose a
+§10.9 setup mode, and behind that its upload step picked the first file input on the page,
+which since the environment section was added is the room-photo input, not the wall slot.
+Both are harness faults, fixed in G3. It now reports 63 browser checks: 42 in-page and 21
+driven through the running editor and game (§11.7, "As built (G3)").
 
 ---
 
@@ -1391,6 +1401,41 @@ running game — stay in `npm run check:offline`. The build cannot run a browser
   photographs is guessing a fact about the home (§10.4). The caregiver picks.
 - Room relabelling is OUT: no screen shows room names today.
 
+**As built (G3).** The step sits in the §9 editor directly under the display name and
+photo quality. `src/TemplatePicker.ts` builds the four cards from the registry; each card's
+title and one-line description are the template's own `name` and `description` fields
+(§11.1), and its plan is `planSvg(template, mirrored)` in `src/templates/plan.ts`. That is
+an inline SVG computed from the template data — rooms, wall runs, openings, furniture,
+floor-level exterior solids and the front door — and, when mirrored, from
+`mirrorTemplate`'s output, the same data the mirrored house is built from. It holds no
+text, so there is nothing in it to mirror. Doors are drawn as a leaf in their gap and arches
+as an open gap; `openPlan`'s threshold strip, which lies on no wall run, is dashed.
+
+Every card has its own "Flip left to right" toggle. Toggling redraws that card at once and
+does not select it; selecting a card takes its toggle's state. The picker writes only
+`profile.templateId` and `profile.mirrored`. Nothing is stored until Save and Play, which
+commits them in §9's single transaction with the rest of the profile.
+
+Which house is built is decided by `houseFor(search, profile)` in `src/templates/index.ts`:
+
+- `?template=` present: the dev override, as before — for a local profile as well as for
+  the demos (G3-1).
+- a local profile active: its `templateId` and `mirrored`.
+- otherwise (Mira, Raju): `templateFromLocation`, which is `hallway` unmirrored unless the
+  URL says otherwise.
+
+A profile saved before G3 has no layout fields and reads back as `hallway`, unmirrored —
+the house it was always played in. A stored id that is no longer registered builds
+`hallway` with a console warning, as an unknown `?template=` does. In that case the editor
+shows no card selected, and Save and Play refuses until one is chosen. `profileErrors`
+rejects any unregistered id.
+
+The §10 agent cannot reach any of this. The model is only ever handed `AGENT_TOOL_SCHEMA`
+(authoring) and `ENVIRONMENT_TOOL` (`set_environment`, now an exported constant). Neither
+has a template, mirror or layout field. `validateEnvironment` keeps only its own seven keys,
+so even a response that included a layout would never reach the profile.
+`tools/checks/agent.check.ts` §7 asserts all three points.
+
 ### 11.8 Telemetry
 
 - Exports gain `world: { templateId, mirrored, templateVersion }`.
@@ -1400,6 +1445,13 @@ running game — stay in `npm run check:offline`. The build cannot run a browser
   staying the same. The fields must exist so a reader can check.
 - `templateId` is not caregiver content, so it is permitted in local exports under §9's
   privacy rules.
+
+**As built (G3).** `ExportContext.world` is required and `buildExport` copies it to
+`world: { templateId, mirrored, templateVersion }` on every export. `main.ts` fills it from
+the `HouseWorld` actually built, not from the profile, so an override or a fallback is
+reported as what was played. The `comparability` string now names the same three fields,
+so the rule travels in the file, as `notDiagnostic` does. No geometry changed in G3, so
+every `templateVersion` is still 1.
 
 ### 11.9 OUT
 
@@ -1497,3 +1549,25 @@ v-sync reading, not a cost (§7). The cost itself, as `gl.finish()` render time 
 
 If the demo machine is a different computer, these figures are not its figures, and the
 command must be run there.
+
+The ones from building G3 (the layout picker and the export `world` block, 2026-09-23):
+
+**G3-1 — `?template=` overrides a local profile's layout too.** §11.7 names the override
+only for the demo packs. As built, it wins for a local profile as well: it is a dev override,
+and `check:offline` and `perf-templates.mjs` rely on it to choose the house regardless of
+what is stored. Without `?template=`, a local profile ignores `?mirror=1`. The demos keep
+G1's behaviour, where `?mirror=1` alone mirrors `hallway`.
+
+**G3-2 — Demo exports change shape.** §9 says bundled demo exports "retain their existing
+format". Under §11.8 they now also carry `world` (always `hallway`, unmirrored, version 1,
+unless `?template=` is set), and every export's `comparability` sentence names the house.
+§11.8 says exports gain the block and makes no exception for demos. A demo attempt is only
+comparable within the same house, like any other attempt.
+
+**G3-3 — `Template` gains `name` and `description`.** §11.1 lists what a template declares;
+the caregiver-facing card title and one-line description are now two more fields. They are
+not geometry, so `templateVersion` is unchanged, and the generator does not read them.
+
+**G3-4 — The picker is a section of the editor, not a separate step.** §11.7 calls it a
+"step". The §9 editor is one scrolling form with no steps, so the layout choice is its own
+section, under the display name. It is not a wizard page.

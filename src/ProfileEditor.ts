@@ -1,6 +1,7 @@
 import { environmentEditor } from './EnvironmentEditor'
 import { newId, newProfile, profileErrors, profileStore, type LocalProfile, type Photo, type Question } from './LocalProfile'
 import { cropRect, importPhoto } from './PhotoMedia'
+import { templatePicker } from './TemplatePicker'
 
 export function openProfileEditor(saved: LocalProfile | undefined, maxTextureSize: number, onClose: () => void): void {
   const profile = saved ? structuredClone(saved) : newProfile()
@@ -53,6 +54,8 @@ export function openProfileEditor(saved: LocalProfile | undefined, maxTextureSiz
     finally { busy = false; dialog.querySelectorAll<HTMLInputElement>('button,input,select,textarea').forEach(b => { b.disabled = false }) }
   }
   const environmentSection = environmentEditor(profile, run)
+  // Built once, like the environment section: its toggles keep their state across render().
+  const layoutSection = templatePicker(profile)
   const slot = (parent: Element, title: string, aspect: number, get: () => Photo | undefined, set: (photo?: Photo) => void, extraAspect?: number) => {
     const section = document.createElement('section'); parent.append(section)
     const h = document.createElement('h3'); h.textContent = title; section.append(h)
@@ -111,7 +114,7 @@ export function openProfileEditor(saved: LocalProfile | undefined, maxTextureSiz
     previewGeneration++; release(); main.replaceChildren()
     field(main, 'Profile display name', profile.name, v => { profile.name = v })
     select(main, 'Photo quality (independent of display pixel ratio)', [{ id: '2048', label: 'Standard — up to 2048 px' }, { id: '4096', label: `High quality — up to ${Math.min(4096, maxTextureSize)} px` }], String(profile.quality), v => { if (v) profile.quality = Number(v) as 2048 | 4096 })
-    main.append(environmentSection)
+    main.append(layoutSection, environmentSection)
     const slots = document.createElement('div'); slots.className = 'slots'; main.append(slots)
     slot(slots, 'Living-room wall photograph', .95 / .7, () => profile.wall, p => { profile.wall = p })
     slot(slots, 'Event photograph — beside the living-room wall frame', .95 / .7, () => profile.event, p => { profile.event = p })

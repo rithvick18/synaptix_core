@@ -3,6 +3,9 @@ import { styleMaterial } from '../src/EnvironmentMaterials'
 import * as THREE from 'three'
 import { newProfile, newId, profileStore, profileErrors, profilePack, type Question } from '../src/LocalProfile'
 import { importPhoto, dimensions, cropRect, MediaResolver } from '../src/PhotoMedia'
+import { TEMPLATES, houseFor } from '../src/templates'
+import { planSvg } from '../src/templates/plan'
+import { DEFAULT_AGENT_CONFIG, agentConfigStore, defaultModelForMode, providerForMode } from '../src/agent/config'
 
 export async function run(): Promise<{ checks: string[]; id: string }> {
   const checks: string[] = []
@@ -44,6 +47,10 @@ export async function run(): Promise<{ checks: string[]; id: string }> {
   let generationTask: Promise<void> = Promise.resolve()
   const editor = environmentEditor(p, action => { generationTask = action(); return generationTask })
   const style = { wall: '#228844', floor: '#bb9977', wood: '#665544', fabric: '#445566', accent: '#aa4422', floorType: 'tile', light: 'cool' }
+  // Generate refuses to run until a setup mode is chosen (§10.9 F4). A fresh browser has
+  // none, so choose offline — the local llama.cpp shape the stubbed fetch below answers.
+  const priorConfig = agentConfigStore.load()
+  agentConfigStore.save({ ...DEFAULT_AGENT_CONFIG, enabled: true, setupMode: 'offline', provider: providerForMode('offline'), model: defaultModelForMode('offline'), consentGiven: true })
   try {
     window.fetch = async (_url, init) => {
       const request = JSON.parse(String(init?.body))
@@ -59,7 +66,7 @@ export async function run(): Promise<{ checks: string[]; id: string }> {
     styleMaterial(mat, 'tileFloor', p.environment!)
     ok(mat.map instanceof THREE.CanvasTexture && mat.color.getHexString() === 'bb9977', 'generated floor pattern and colour reach real Three material')
     mat.map?.dispose(); mat.dispose()
-  } finally { window.fetch = realFetch }
+  } finally { window.fetch = realFetch; agentConfigStore.save(priorConfig) }
 
   ok(profileErrors(p).length === 0, 'image-only profile valid with explicit skip')
   p.skipRecall = false
@@ -98,6 +105,23 @@ export async function run(): Promise<{ checks: string[]; id: string }> {
   try { await profileStore.save({ ...p, name: 'Must not persist' }) } catch { failed = true } finally { IDBObjectStore.prototype.put = put }
   restored = await profileStore.read()
   ok(failed && restored.profile?.name === p.name, 'aborted save preserves last successful profile')
+  // §11.7 — the house layout, stored with the profile.
+  ok(newProfile().templateId === 'hallway' && newProfile().mirrored === false, 'new profile defaults to hallway, unmirrored')
+  const { templateId: _t, mirrored: _m, ...preG3 } = p
+  await profileStore.save(preG3 as typeof p); restored = await profileStore.read()
+  ok(restored.profile?.templateId === 'hallway' && restored.profile.mirrored === false && restored.profile.wall?.crop.x === .2, 'profile saved before layouts existed reads back as hallway, unmirrored, media intact')
+  await profileStore.save({ ...p, templateId: 'courtyard', mirrored: true }); restored = await profileStore.read()
+  ok(restored.profile?.templateId === 'courtyard' && restored.profile.mirrored === true && restored.selected === p.id, 'templateId and mirrored commit in the same transaction as the profile and selection')
+  ok(profileErrors({ ...p, templateId: 'nope' }).some(v => v.includes('layout')), 'unregistered layout rejected at save')
+  const h = (search: string, choice?: { templateId: string; mirrored: boolean }) => { const s = houseFor(search, choice); return `${s.template.id}:${s.mirror}:${!!s.problem}` }
+  ok(h('') === 'hallway:false:false' && h('?patient=raju') === 'hallway:false:false', 'demo packs build hallway without ?template=')
+  ok(h('', { templateId: 'row', mirrored: true }) === 'row:true:false', 'local profile builds its chosen layout')
+  ok(h('?template=openPlan', { templateId: 'row', mirrored: true }) === 'openPlan:false:false' && h('?patient=mira&template=courtyard&mirror=1') === 'courtyard:true:false', '?template= overrides profile and demo alike')
+  ok(h('', { templateId: 'gone', mirrored: true }) === 'hallway:false:true', 'stored unregistered layout falls back to hallway and says so')
+  const plans = Object.values(TEMPLATES).flatMap(t => [planSvg(t, false), planSvg(t, true)])
+  ok(new Set(plans).size === 8 && Object.values(TEMPLATES).every(t => planSvg(t, true) === planSvg(t, true)), 'eight distinct, deterministic plan thumbnails from template data')
+  ok(Object.values(TEMPLATES).every(t => t.name.trim() && t.description.trim() && !t.description.includes('\n')) && new Set(Object.values(TEMPLATES).map(t => t.description)).size === 4, 'every template has its own one-line description')
+
   await profileStore.select('raju'); restored = await profileStore.read()
   ok(restored.selected === 'raju' && restored.profile?.id === p.id, 'switch to demo retains local profile')
   await profileStore.save(p)

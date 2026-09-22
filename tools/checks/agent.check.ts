@@ -17,6 +17,8 @@ import { buildAllowedTokens } from '../../src/agent/tokens'
 import { StubModel, type StubModelScript } from '../../src/agent/stubModel'
 import { PROPOSAL_FIXTURES } from '../../src/agent/__fixtures__/proposals.fixtures'
 import { DEFAULT_AGENT_CONFIG } from '../../src/agent/config'
+import { ENVIRONMENT_TOOL, validateEnvironment } from '../../src/agent/environment'
+import { proposalTools } from '../../src/agent/grammar'
 
 let checks = 0
 const failures: string[] = []
@@ -173,6 +175,32 @@ for (const rule of ['F-a', 'F-b', 'F-c', 'F-d', 'F-e', 'F-f', 'F-g', 'F-h', 'F-i
 
   const tokensWithAgentDisabled = buildAllowedTokens({ texts: ['Ananya visited.'], fields: [] })
   ok(tokensWithAgentDisabled.has('Ananya'), '§10.9 tokens: the builder works identically whether or not agent.enabled is true')
+}
+
+// ---------------------------------------------------------------------------
+// 7. §11.7 — the agent does not choose or propose a template
+//
+// Guessing a home's layout from its photographs is guessing a fact about the home
+// (§10.4). These are every tool a model is ever handed — the authoring run's
+// `proposalTools()` is drawn from `AGENT_TOOL_SCHEMA`, the environment run's only tool is
+// `ENVIRONMENT_TOOL` — so no name, description or parameter in them may reach the house.
+// ---------------------------------------------------------------------------
+
+{
+  const reachable = [...AGENT_TOOL_SCHEMA, ...proposalTools(), ENVIRONMENT_TOOL]
+  const house = /template|mirror|layout|floor ?plan/i
+  for (const tool of reachable) {
+    ok(!house.test(JSON.stringify(tool)), `§11.7 tool "${tool.name}" has no template, mirror or layout field or wording`)
+  }
+  ok(!reachable.some((t) => /template|layout/i.test(t.name)), '§11.7 no tool is named for templates or layouts')
+
+  // And the environment result is filtered to its own keys: a model that returned a
+  // layout anyway could not have it reach the profile.
+  const smuggled = validateEnvironment({
+    wall: '#aabbcc', floor: '#aabbcc', wood: '#aabbcc', fabric: '#aabbcc', accent: '#aabbcc',
+    floorType: 'wood', light: 'warm', templateId: 'courtyard', mirrored: true
+  }) as unknown as Record<string, unknown>
+  ok(!('templateId' in smuggled) && !('mirrored' in smuggled), '§11.7 set_environment output drops templateId and mirrored')
 }
 
 // ---------------------------------------------------------------------------

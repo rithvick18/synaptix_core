@@ -429,6 +429,17 @@ export function dwellByObject(events: readonly Event[]): DwellTotal[] {
 // Export
 // ---------------------------------------------------------------------------
 
+/**
+ * §11.8 — attempts are comparable only within the same `templateId` + `mirrored` +
+ * `templateVersion`: a different house is a different task. `templateId` is not
+ * caregiver content, so it is permitted in local exports under §9's privacy rules.
+ */
+export interface WorldBlock {
+  templateId: string
+  mirrored: boolean
+  templateVersion: number
+}
+
 export interface ExportContext {
   /** Which pack the content came from — `?patient=` (§6 Checkpoint C). */
   patientId: string
@@ -438,6 +449,8 @@ export interface ExportContext {
   levelId: string | null
   levelIndex: number | null
   levelTitle: string | null
+  /** §11.8 — which house the attempt was played in. */
+  world: WorldBlock
   /** Identifies this attempt uniquely within the page-load. */
   attemptId: string
   /** 1 for the first attempt of the page-load, counting across all levels. */
@@ -462,6 +475,8 @@ export interface ExportDocument {
   comparability: string
   patient: { id: string; name?: string }
   content?: ExportContext['content']
+  /** §11.8 — the house this attempt was played in. */
+  world: WorldBlock
   /** Which of the pack's levels this attempt played. */
   level: { id: string | null; index: number | null; title: string | null }
   /** Kept as an alias of `level` for anything reading the pre-levels export shape. */
@@ -500,9 +515,10 @@ export function buildExport(events: readonly Event[], context: ExportContext): E
     version: 1,
     generatedAt: new Date().toISOString(),
     notDiagnostic: NOT_DIAGNOSTIC,
-    comparability: 'Compare only against the same patient’s past sessions.',
+    comparability: 'Compare only against the same patient’s past sessions in the same house: the same world templateId, mirrored and templateVersion.',
     patient: { id: context.patientId, ...(context.patientName !== undefined ? { name: context.patientName } : {}) },
     content: context.content,
+    world: { ...context.world },
     level: {
       // The log's own mission id wins over the caller's: it is what was actually played.
       id: summary.missionId ?? context.levelId,

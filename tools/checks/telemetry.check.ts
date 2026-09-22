@@ -229,13 +229,16 @@ const cleanRun: Event[] = [
     levelTitle: 'A glass of water',
     attemptId: 'mira-water-a1',
     attemptNumber: 1,
-    restarts: 2
+    restarts: 2,
+    world: { templateId: 'hallway', mirrored: false, templateVersion: 1 }
   })
   eq(doc.format, 'memoria-telemetry', 'export: tagged format')
   eq(doc.patient.id, 'mira', 'export: patient id')
   eq(doc.notDiagnostic, NOT_DIAGNOSTIC, '§4.4 the not-diagnostic label travels in the file')
   ok(doc.notDiagnostic.includes('not diagnostic'), '§4.4 the label says "not diagnostic"')
   ok(doc.comparability.includes('same patient'), '§4.4 the file says what it may be compared against')
+  ok(doc.comparability.includes('templateId') && doc.comparability.includes('templateVersion'), '§11.8 the file says attempts compare only within the same house')
+  eq(JSON.stringify(doc.world), '{"templateId":"hallway","mirrored":false,"templateVersion":1}', '§11.8 export carries world { templateId, mirrored, templateVersion }')
   eq(doc.session.restarts, 2, 'export: restart count recorded')
   eq(doc.events.length, cleanRun.length, 'export: the raw log is included in full')
   eq(doc.summary.outcomes.revealed, 0, '§6 export has all four outcome counts')
@@ -257,7 +260,8 @@ const cleanRun: Event[] = [
       levelTitle: 'Familiar memories',
       attemptId: 'raju-familiar-memories-a1',
       attemptNumber: 1,
-      restarts: 0
+      restarts: 0,
+      world: { templateId: 'row', mirrored: true, templateVersion: 1 }
     }
   )
   const parsed = JSON.parse(JSON.stringify(revealedDoc))
@@ -746,7 +750,8 @@ function endToEnd(missionIndex = 0) {
     levelTitle: 'Familiar memories',
     attemptId: r.recorder.attemptId,
     attemptNumber: r.recorder.attempts,
-    restarts: r.recorder.restarts
+    restarts: r.recorder.restarts,
+    world: { templateId: 'hallway', mirrored: false, templateVersion: 1 }
   })
   eq(doc.session.missionIdsInLog.length, 1, 'switch: the export says so on its face')
   eq(doc.level.id, 'familiar-memories', 'switch: the export names the level played')

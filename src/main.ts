@@ -35,7 +35,7 @@ import { agentConfigStore, needsSetup, type AgentConfig } from './agent/config'
 import { describeSetup, openSetupScreen } from './agent/setupModeUI'
 import { assertWorldContract } from './World'
 import { createProceduralHouse } from './proceduralHouse'
-import { TEMPLATES, templateFromLocation } from './templates'
+import { TEMPLATES, houseFor } from './templates'
 
 /**
  * SPEC.md §3 — entry and game loop.
@@ -189,10 +189,11 @@ async function boot(): Promise<void> {
   const quality = detectQuality(renderer.deviceInfo(), qualityOverrideFromLocation(location.search))
   console.log('[memoria] quality', quality)
 
-  // §11 — which house. The demos and the local profile are all on the default template
-  // until the §9 editor offers a choice; `?template=<id>&mirror=1` overrides it for
-  // development and for the offline check, which plays every template both ways round.
-  const house = templateFromLocation(location.search)
+  // §11.7 — which house. A local profile is played in the layout its caregiver chose;
+  // the Mira and Raju demos are always on the default template. `?template=<id>&mirror=1`
+  // overrides both, for development and for the offline check, which plays every
+  // template both ways round.
+  const house = houseFor(location.search, activeProfile)
   if (house.problem) console.warn(`[memoria] ${house.problem}`)
 
   // Both downloads are optional by contract (§1.1); neither can fail the boot.
@@ -328,6 +329,9 @@ async function boot(): Promise<void> {
     levelId: levels[levelIndex]?.id ?? null,
     levelIndex: levelIndex >= 0 ? levelIndex : null,
     levelTitle: levels[levelIndex]?.title ?? null,
+    // §11.8 — the house actually built, not the one the profile asked for: an override
+    // or a fallback can differ, and the export must say which task was played.
+    world: { templateId: world.templateId, mirrored: world.mirrored, templateVersion: world.templateVersion },
     attemptId,
     attemptNumber: recorder.attempts,
     restarts: recorder.restarts

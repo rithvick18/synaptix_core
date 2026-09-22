@@ -195,6 +195,10 @@ export const MOUNT_MIRROR_AXIS: Record<keyof Mounts, MirrorAxis> = {
 
 export interface Template {
   id: string
+  /** §11.7 — the caregiver-facing card title in the layout picker. Plain words. */
+  name: string
+  /** §11.7 — the card's one-line plain description. Says only what the plan shows. */
+  description: string
   /**
    * §11.8 — bumped whenever this template's geometry changes. Attempts are comparable
    * only within the same template id, mirror and version.

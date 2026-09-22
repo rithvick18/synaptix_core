@@ -81,6 +81,8 @@ const OPENINGS: OpeningSpec[] = [
 
 export const hallway: Template = {
   id: 'hallway',
+  name: 'Central hallway',
+  description: 'A hallway runs from the front door to the back, with two rooms on each side.',
   version: 1,
 
   rooms: [

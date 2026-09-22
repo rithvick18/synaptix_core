@@ -182,7 +182,7 @@ try {
   console.log('  PASS remove preview and cancel leave saved profile intact')
   await cdp.eval("[...document.querySelectorAll('button')].find(b=>b.textContent==='Edit Profile').click()")
   await cdp.eval(`(() => {
-    const input = document.querySelector('#profile-editor input[type=file]')
+    const input = document.querySelector('#profile-editor input[type=file][aria-label="Living-room wall photograph"]')
     const dt = new DataTransfer(); dt.items.add(new File(['invalid'], 'broken.png', {type:'image/png'}))
     input.files = dt.files; input.dispatchEvent(new Event('change'))
   })()`)
@@ -192,7 +192,7 @@ try {
   await cdp.eval(`import('/src/LocalProfile.ts').then(async m => {
     const p = (await m.profileStore.read()).profile
     const dt = new DataTransfer(); dt.items.add(new File([p.wall.original], 'replacement.png', {type:'image/png'}))
-    const input = document.querySelector('#profile-editor input[type=file]'); input.files = dt.files; input.dispatchEvent(new Event('change'))
+    const input = document.querySelector('#profile-editor input[type=file][aria-label="Living-room wall photograph"]'); input.files = dt.files; input.dispatchEvent(new Event('change'))
   })`, true)
   await until("!document.querySelector('#profile-editor button').disabled && !document.querySelector('#profile-editor .error').textContent")
   console.log('  PASS valid upload replaces image and refreshes crop preview')
@@ -229,15 +229,118 @@ try {
   await cdp.eval('window.__memoria.ui.updateAnswerCard({choices:[window.__photoChoices[0],window.__photoChoices[2]]})')
   if ((await cdp.eval("document.querySelectorAll('#answer img.portrait').length")) !== 0) throw new Error('Photo fallback did not survive reduction')
   console.log('  PASS late photo failure switches entire question to text and stays text after choice reduction')
+  // ---- §11.7 / §11.8 — Choose your home's layout ------------------------------------
+  let extra = 0
+  const pass = (label) => { extra++; console.log('  PASS', label) }
+  const house = () => cdp.eval('JSON.stringify(window.__memoriaAssets.template)')
+  const same = (a, b, label) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${label}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`) }
+  const versions = await cdp.eval("import('/src/templates/index.ts').then(m => Object.fromEntries(Object.entries(m.TEMPLATES).map(([id, t]) => [id, t.version])))", true)
+  // Everything the caregiver made, photographs by their original bytes. Layout fields are left out.
+  const CONTENT = `import('/src/LocalProfile.ts').then(async m => {
+    const p = (await m.profileStore.read()).profile
+    const bytes = async b => { const a = new Uint8Array(await b.arrayBuffer()); let h = 0; for (const x of a) h = (h * 31 + x) >>> 0; return a.length + ':' + h }
+    const photo = async v => v ? { id: v.id, crop: v.crop, width: v.width, height: v.height, original: await bytes(v.original), runtime: await bytes(v.runtime), thumbnail: await bytes(v.thumbnail) } : null
+    return JSON.stringify({ id: p.id, name: p.name, caption: p.caption, quality: p.quality, skipRecall: p.skipRecall, wallId: p.wallId, eventId: p.eventId,
+      environment: p.environment ?? null, wall: await photo(p.wall), event: await photo(p.event),
+      people: await Promise.all(p.people.map(async v => ({ id: v.id, name: v.name, relationship: v.relationship, photo: await photo(v.photo) }))),
+      questions: p.questions })
+  })`
+  const stored = () => cdp.eval("import('/src/LocalProfile.ts').then(async m => { const p = (await m.profileStore.read()).profile; return p.templateId + ':' + p.mirrored })", true)
+  const openEditor = async () => {
+    await cdp.eval("window.__memoria.debug.showLevels(); [...document.querySelectorAll('button')].find(b=>b.textContent==='Edit Profile').click()")
+    await until("!!document.querySelector('#profile-editor[open] [data-template-picker]')")
+  }
+  const cards = () => cdp.eval(`import('/src/templates/index.ts').then(async ({ TEMPLATES }) => {
+    const { planSvg } = await import('/src/templates/plan.ts')
+    // Both sides through the same parser: the DOM re-serialises <rect/> as <rect></rect>.
+    const parsed = (t, mirrored) => { const d = document.createElement('div'); d.innerHTML = planSvg(t, mirrored); return d.innerHTML }
+    return [...document.querySelectorAll('#profile-editor [data-template-picker] .card')].map(card => {
+      const t = TEMPLATES[card.dataset.template], mirrored = card.querySelector('input[data-mirror]').checked
+      return { id: card.dataset.template, picked: card.querySelector('input[type=radio]').checked, mirrored,
+        rects: card.querySelectorAll('.plan svg rect').length, description: card.querySelector('p').textContent,
+        fromData: card.querySelector('.plan').innerHTML === parsed(t, mirrored), svg: card.querySelector('.plan').innerHTML }
+    })
+  })`, true)
+  const card = (id, part) => `document.querySelector('#profile-editor .card[data-template="${id}"] ${part}').click()`
+  const saveAndPlay = async () => {
+    await cdp.eval("window.__memoria = undefined; [...document.querySelectorAll('#profile-editor button')].find(b=>b.textContent==='Save and Play').click()")
+    await until('!!window.__memoria?.debug && window.__memoria.level === 0')
+  }
+  const playLevel = (level) => cdp.eval(`(() => {
+    const g=window.__memoria; g.debug.startLevel(${level});
+    for(let n=0;n<20 && g.runner.active;n++) { const s=g.runner.current;
+      if(s.type==='recall') document.querySelector('button.choice[data-id="'+s.answer+'"]').click(); else g.runner.skip() }
+    return {done:g.state.current==='completed', export:g.exportJson()}
+  })()`)
+
+  // A person with a portrait and their own crop, so "people intact" compares something.
+  await cdp.eval("import('/src/LocalProfile.ts').then(async m => { const p = (await m.profileStore.read()).profile; p.people = [{ id: m.newId(), name: 'Layout Fixture Person', relationship: 'Layout fixture relation', photo: { ...p.wall, id: m.newId(), crop: { x: .3, y: .6, zoom: 1.4 } } }]; await m.profileStore.save(p) })", true)
+  await boot(ORIGIN + '/')
+  same(JSON.parse(await house()), { id: 'hallway', version: versions.hallway, mirrored: false }, 'default house')
+  await openEditor()
+  let shown = await cards()
+  same(shown.map(c => c.id), Object.keys(versions), 'cards')
+  if (shown.length !== 4 || !shown.every(c => c.rects > 20 && c.fromData && c.description.trim()) || new Set(shown.map(c => c.svg)).size !== 4) throw new Error('Layout cards: ' + JSON.stringify(shown.map(({ svg, ...c }) => c)))
+  pass('layout step shows four cards, each a plan drawn from its template data with a one-line description')
+  if (!shown.every(c => c.picked === (c.id === 'hallway') && !c.mirrored)) throw new Error('Default selection: ' + JSON.stringify(shown.map(({ svg, ...c }) => c)))
+  pass('saved profile opens on hallway, unmirrored')
+  const before = shown.find(c => c.id === 'courtyard').svg
+  await cdp.eval(card('courtyard', 'input[data-mirror]'))
+  shown = await cards()
+  const flipped = shown.find(c => c.id === 'courtyard')
+  if (!flipped.mirrored || !flipped.fromData || flipped.svg === before || !flipped.svg.includes('data-mirrored="1"') || !shown.find(c => c.id === 'hallway').picked) throw new Error('Mirror toggle did not redraw from mirrored data')
+  pass('mirror toggle redraws that card from the mirrored template data, live, without selecting it')
+  await cdp.eval(card('courtyard', 'input[type=radio]'))
+  const content = await cdp.eval(CONTENT, true)
+  await saveAndPlay()
+  same(await stored(), 'courtyard:true', 'stored layout')
+  same(JSON.parse(await house()), { id: 'courtyard', version: versions.courtyard, mirrored: true }, 'built house after save')
+  pass('pick courtyard, mirrored → Save and Play stores templateId and mirrored and builds that house')
+  await boot(ORIGIN + '/')
+  same(JSON.parse(await house()), { id: 'courtyard', version: versions.courtyard, mirrored: true }, 'built house after reload')
+  await openEditor()
+  shown = await cards()
+  if (!shown.every(c => c.picked === (c.id === 'courtyard') && c.mirrored === (c.id === 'courtyard') && c.fromData)) throw new Error('Editor after reload: ' + JSON.stringify(shown.map(({ svg, ...c }) => c)))
+  await cdp.eval("[...document.querySelectorAll('#profile-editor button')].find(b=>b.textContent==='Cancel').click()")
+  pass('reload persists the layout: the same house is built and the editor reopens on it, mirrored')
+  for (let level = 0; level < 3; level++) {
+    const played = await playLevel(level)
+    if (!played.done) throw new Error('Level did not complete in courtyard: ' + level)
+    same(played.export.world, { templateId: 'courtyard', mirrored: true, templateVersion: versions.courtyard }, 'export world')
+    const text = JSON.stringify(played.export)
+    if (played.export.patient.name || text.includes('Browser fixture') || text.includes('Layout Fixture') || text.includes('blob:')) throw new Error('Export privacy failed in courtyard')
+  }
+  pass('all three levels play in mirrored courtyard; every export carries world { templateId, mirrored, templateVersion } and stays private')
+  await openEditor()
+  await cdp.eval(card('openPlan', 'input[type=radio]'))
+  await saveAndPlay()
+  same(await stored(), 'openPlan:false', 'stored layout after switch')
+  same(JSON.parse(await house()), { id: 'openPlan', version: versions.openPlan, mirrored: false }, 'built house after switch')
+  const after = await cdp.eval(CONTENT, true)
+  if (after !== content) throw new Error('Switching layout changed caregiver content:\n' + content + '\n' + after)
+  const parsed = JSON.parse(after)
+  if (!parsed.wall || !parsed.people[0]?.photo || !parsed.questions.length) throw new Error('Content comparison had nothing to compare')
+  pass(`switching courtyard → openPlan leaves photographs (original, derivatives, crops), ${parsed.people.length} person(s) and ${parsed.questions.length} questions identical`)
+  same((await playLevel(0)).export.world, { templateId: 'openPlan', mirrored: false, templateVersion: versions.openPlan }, 'export world after switch')
+  pass('export after the switch names the new house')
+
+  // Demo packs stay on hallway while the local profile is on openPlan (§11.7).
+  await boot(ORIGIN + '/?patient=mira')
+  same([await cdp.eval('window.__memoria.patientId'), JSON.parse(await house())], ['mira', { id: 'hallway', version: versions.hallway, mirrored: false }], 'Mira demo house')
+  same((await playLevel(0)).export.world, { templateId: 'hallway', mirrored: false, templateVersion: versions.hallway }, 'Mira export world')
+  await boot(ORIGIN + '/?patient=mira&template=row&mirror=1')
+  same(JSON.parse(await house()), { id: 'row', version: versions.row, mirrored: true }, 'Mira ?template= override')
+  pass('Mira demo stays on hallway while the local profile is on openPlan; only ?template= moves it')
   await cdp.eval("import('/src/LocalProfile.ts').then(m=>m.profileStore.select('raju'))", true)
   await boot(ORIGIN + '/')
   if ((await cdp.eval('window.__memoria.patientId')) !== 'raju') throw new Error('Demo switch failed')
-  console.log('  PASS switch to Raju demo restores its pack')
+  same(JSON.parse(await house()), { id: 'hallway', version: versions.hallway, mirrored: false }, 'Raju demo house')
+  console.log('  PASS switch to Raju demo restores its pack, on hallway')
   await cdp.eval("import('/src/LocalProfile.ts').then(m=>m.profileStore.delete())", true)
   const deleted = await cdp.eval("import('/src/LocalProfile.ts').then(m=>m.profileStore.read()).then(r=>!r.profile && r.selected==='mira')", true)
   if (!deleted) throw new Error('Delete failed')
   console.log('  PASS Delete Profile removes saved data and selects Mira')
-  console.log(`${result.checks.length + 12} browser checks passed`)
+  console.log(`${result.checks.length + 12 + extra} browser checks passed`)
 } finally {
   cdp?.ws.close()
   const stopped = new Promise(resolve => {
