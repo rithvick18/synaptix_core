@@ -76,14 +76,10 @@ export interface LevelChoice {
 export interface LevelSelectView {
   onPersonalise?: () => void
   personalisationLabel?: string
-  /**
-   * Opens the agent-assisted setup screen (SPEC.md §10). Present only when
-   * `agent.enabled` is true, which it is not in a shipped build — so by default this is
-   * undefined and no button is rendered. It lives here, on the level-select screen,
-   * because §10.1 requires it be unreachable during a patient session.
-   */
-  onCaregiverSetup?: () => void
-  caregiverSetupLabel?: string
+  /** Reopens the start-up setup screen (offline llama.cpp / online Gemini). */
+  onSetup?: () => void
+  /** What that button says, including which mode is currently chosen. */
+  setupLabel?: string
   storageWarning?: string
   title: string
   subtitle: string
@@ -484,11 +480,11 @@ export class UI {
       button.onclick = e => { e.stopPropagation(); view.onPersonalise?.() }
       this.overlayCard.append(button)
     }
-    if (view.onCaregiverSetup) {
+    if (view.onSetup) {
       const button = document.createElement('button')
-      button.className = 'caregiverSetup'
-      button.textContent = view.caregiverSetupLabel ?? 'Build from Photographs'
-      button.onclick = e => { e.stopPropagation(); view.onCaregiverSetup?.() }
+      button.dataset.act = 'setup'
+      button.textContent = view.setupLabel ?? 'Setup'
+      button.onclick = e => { e.stopPropagation(); view.onSetup?.() }
       this.overlayCard.append(button)
     }
     if (view.storageWarning) {

@@ -30,49 +30,33 @@ netlify deploy --prod --dir=dist
 
 - `vite.config.ts` sets `base: './'`, so the build works from a subpath as well as a root
   domain — no change is needed for either host.
-- There are no server-side routes and no environment variables to configure.
+- There are no server-side routes. Environment variables are optional: `.env.example`
+  lists build-time defaults for both setup modes, and none of them is required — the
+  setup screen collects what online mode needs, in the browser.
 - The build fetches Poly Haven textures and the HDRI at runtime from
   `dl.polyhaven.org` (CORS-open). If the host adds a restrictive Content-Security-Policy,
   allow that origin — or leave it blocked and the §1.1 fallback takes over.
 
-## The agent layer ships fully inert (SPEC.md §10)
+## Vision environment generation — offline and online
 
-Checkpoint F (`src/agent/`) is in this repository but is not reachable from the deployed
-app. `agent.enabled` defaults to `false` (`src/agent/config.ts`), and a caregiver has to
-turn it on in their own browser before any of it loads.
+On first load the app asks where the model that reads room photographs should run. Both
+modes are inert until **Generate** is clicked in Personalise Home, and a saved
+environment style renders with no model at all, so a deployment that never generates
+needs nothing from this section.
 
-That inertness is structural, not just conditional. `main.ts` statically imports exactly
-one module from `src/agent/` — `enabled.ts`, which reads the flag out of `localStorage`
-and imports nothing itself. Everything else sits behind a dynamic `import()` that only
-runs after the flag reads true, so Vite emits it as separate chunks the browser never
-requests in a default deploy:
+**Offline mode** calls a `llama-server` the user runs themselves. `VITE_AGENT_BASE_URL`
+and `VITE_AGENT_MODEL` are optional build-time settings; the endpoint defaults to
+`http://127.0.0.1:8080` and any non-loopback address is refused before a socket opens. No
+model server or model weights ship in `dist/`. The user must run a vision-capable
+llama-server with its matching projector and permit browser CORS/local-network access; a
+hosted HTTPS deployment may need a browser-compatible HTTPS loopback endpoint for this to
+work at all.
 
-```
-dist/assets/index-*.js            the app — contains no part of the agent layer
-dist/assets/caregiverSetup-*.js   the setup screen, firewall, grammar, llama.cpp adapter
-dist/assets/config-*.js           agent config
-dist/assets/provider-*.js         the hosted SDK — only if a hosted call is ever made
-```
-
-Verify it directly on a fresh build rather than trusting the split:
-
-```bash
-npm run build
-cd dist/assets
-for s in propose_photo_placement llama-server firewall request_caregiver_input anthropic; do
-  grep -qi -- "$s" index-*.js && echo "LEAKED: $s" || echo "absent: $s"
-done
-```
-
-All five must report `absent`. The only agent-related string in the entry chunk is the
-`localStorage` key `smriti-agent-config-v1`, which is `enabled.ts` doing its job.
-
-There is no environment variable to set for a production deploy. `VITE_AGENT_API_KEY` /
-`VITE_AGENT_MODEL` and the `VITE_AGENT_LLAMACPP_*` settings (`.env.example`) are read
-only by the provider adapters, which nothing on the deployed path calls. Do not set them
-on a hosting provider for this deployment — there is no code path that would read them,
-and no reason to hold a key there.
-
-The local provider (`provider: 'llamacpp'`) is a *local development and caregiver-machine*
-option, not a hosted one: it expects a `llama-server` on loopback. A deployed build has no
-such server and is not configured to look for one.
+**Online mode** calls Google's `gemini-3.5-flash-lite` at
+`https://generativelanguage.googleapis.com`, which is the only host the adapter will talk
+to. The API key is entered on the setup screen and kept in the visitor's own browser —
+**do not** set `VITE_GEMINI_API_KEY` for a hosted build, because Vite inlines every
+`VITE_` variable into the shipped bundle, where it is readable by anyone who loads the
+page. If the host sets a restrictive Content-Security-Policy, allow
+`generativelanguage.googleapis.com` in `connect-src`, or online mode will fail with an
+unreachable-server message and offline mode will still work.
