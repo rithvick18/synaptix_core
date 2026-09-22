@@ -2,6 +2,8 @@ import type { EnvironmentStyle } from './agent/environment'
 import { styleAnisotropy, styleMaterial, stylesSurface } from './EnvironmentMaterials'
 import type { TextureResolution } from './Quality'
 import * as THREE from 'three'
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { CEILING_HEIGHT, PLAYER_BODY_MAX_Y, PLAYER_BODY_MIN_Y, PLAYER_RADIUS } from './layout'
 import { mirrorTemplate } from './templates/mirror'
 import type {
@@ -69,12 +71,42 @@ const SURFACE_METALNESS: Record<Surface, number> = {
   mirror: 0.7, glass: 0, grass: 0, concrete: 0, foliage: 0
 }
 
-/** Which Poly Haven set backs which surface, and at what world tile size in metres. */
-const TEXTURE_SET: Partial<Record<Surface, { name: string; tile: number }>> = {
+/**
+ * Which Poly Haven set backs which surface, and at what world tile size in metres.
+ *
+ * Several surfaces may share one set — it is downloaded once — and are told apart by
+ * tint. `mean` is the measured average colour of the set's diffuse map; a surface that
+ * declares one is tinted so that, on average, it comes out the flat colour it has
+ * without textures (`SURFACE_COLOUR`). The palette is therefore the same online and
+ * offline, and dark wood is the oak set darkened rather than a second download. The
+ * four original sets predate this and keep the tints they always had.
+ *
+ * Tile sizes for the added sets are Poly Haven's own published dimensions: oak veneer
+ * 1.83 m, the herringbone upholstery weave 0.27 m, the concrete 2.0 m.
+ */
+interface TextureSource { name: string; tile: number; mean?: number }
+const TEXTURE_SET: Partial<Record<Surface, TextureSource>> = {
   wall: { name: 'painted_plaster_wall', tile: 2.5 },
   woodFloor: { name: 'laminate_floor_02', tile: 2.0 },
   tileFloor: { name: 'square_tiles_03', tile: 1.5 },
-  counter: { name: 'marble_01', tile: 1.2 }
+  counter: { name: 'marble_01', tile: 1.2 },
+  wood: { name: 'oak_veneer_01', tile: 1.83, mean: 0xa17e57 },
+  darkWood: { name: 'oak_veneer_01', tile: 1.83, mean: 0xa17e57 },
+  fabric: { name: 'poly_wool_herringbone', tile: 0.27, mean: 0x797571 },
+  fabricWarm: { name: 'poly_wool_herringbone', tile: 0.27, mean: 0x797571 },
+  concrete: { name: 'concrete_floor_02', tile: 2.0, mean: 0x786e5b }
+}
+
+/** Every distinct set, in declaration order: what is actually downloaded. */
+const TEXTURE_NAMES = [...new Set(Object.values(TEXTURE_SET).map((source) => source!.name))]
+
+/** The tint that makes a set whose average is `mean` average out to `target` instead.
+ *  Worked per channel in linear space, where the multiply in the shader happens. */
+function tintFor(target: number, mean: number): THREE.Color {
+  const t = new THREE.Color(target)
+  const m = new THREE.Color(mean)
+  const channel = (a: number, b: number): number => Math.min(3, a / Math.max(b, 1e-4))
+  return new THREE.Color(channel(t.r, m.r), channel(t.g, m.g), channel(t.b, m.b))
 }
 
 export interface HouseBuildReport {
@@ -162,19 +194,72 @@ function scalePlaneUV(geo: THREE.BufferGeometry, w: number, h: number, tile: num
   uv.needsUpdate = true
 }
 
-/** BoxGeometry emits faces in the order +X, -X, +Y, -Y, +Z, -Z, four vertices each. */
-function scaleBoxUV(geo: THREE.BufferGeometry, sx: number, sy: number, sz: number, tile: number): void {
+/**
+ * Box projection at true scale: each vertex takes its UV from the two world axes its
+ * face lies across, divided by the set's tile size. It works on any geometry — rounded
+ * boxes included — and, given the mesh's position as `origin`,
+ * neighbouring pieces continue one texture instead of each restarting it at a corner.
+ */
+function projectUV(geo: THREE.BufferGeometry, tile: number, origin: THREE.Vector3Like = { x: 0, y: 0, z: 0 }): void {
+  const pos = geo.attributes.position as THREE.BufferAttribute
+  const nor = geo.attributes.normal as THREE.BufferAttribute
   const uv = geo.attributes.uv as THREE.BufferAttribute
-  const spans: [number, number][] = [
-    [sz, sy], [sz, sy], [sx, sz], [sx, sz], [sx, sy], [sx, sy]
-  ]
-  for (let f = 0; f < 6; f++) {
-    const [u, v] = spans[f]
-    for (let i = f * 4; i < f * 4 + 4; i++) {
-      uv.setXY(i, uv.getX(i) * (u / tile), uv.getY(i) * (v / tile))
-    }
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) + origin.x, y = pos.getY(i) + origin.y, z = pos.getZ(i) + origin.z
+    const ax = Math.abs(nor.getX(i)), ay = Math.abs(nor.getY(i)), az = Math.abs(nor.getZ(i))
+    if (ax >= ay && ax >= az) uv.setXY(i, z / tile, y / tile)
+    else if (ay >= az) uv.setXY(i, x / tile, z / tile)
+    else uv.setXY(i, x / tile, y / tile)
   }
   uv.needsUpdate = true
+}
+
+/**
+ * How a box-shaped piece of furniture is drawn. Real furniture has no knife edges, and
+ * a bevel is what catches the light along an edge and tells the eye where one surface
+ * ends. `soft` pieces — upholstery, bedding — are rounded well past a bevel. Walls,
+ * floors and the exterior stay square. Only the drawn geometry changes: every blocker
+ * is still the axis-aligned `min`/`max` box.
+ */
+type Edge = 'square' | 'bevel' | 'soft'
+function edgeGeometry(sx: number, sy: number, sz: number, edge: Edge): THREE.BufferGeometry {
+  const least = Math.min(sx, sy, sz)
+  if (edge === 'square' || least < 0.02) return new THREE.BoxGeometry(sx, sy, sz)
+  return edge === 'soft'
+    ? new RoundedBoxGeometry(sx, sy, sz, 3, Math.min(0.06, least * 0.45))
+    : new RoundedBoxGeometry(sx, sy, sz, 1, Math.min(0.012, least * 0.25))
+}
+
+/**
+ * Static detail that never moves or collides — skirting boards, cabinet seams, sills,
+ * window bars, table aprons. Drawn as one merged mesh per surface, so a house full of
+ * trim costs a handful of draw calls rather than hundreds.
+ */
+class DetailBatch {
+  private parts = new Map<Surface, THREE.BufferGeometry[]>()
+  constructor(private mats: Materials) {}
+
+  box(surface: Surface, min: THREE.Vector3Like, max: THREE.Vector3Like): void {
+    const sx = max.x - min.x, sy = max.y - min.y, sz = max.z - min.z
+    if (sx < 1e-4 || sy < 1e-4 || sz < 1e-4) return
+    const geo = new THREE.BoxGeometry(sx, sy, sz)
+    geo.translate((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2)
+    const tile = this.mats.tileOf(surface)
+    if (tile) projectUV(geo, tile)
+    const list = this.parts.get(surface) ?? []
+    list.push(geo)
+    this.parts.set(surface, list)
+  }
+
+  meshes(): THREE.Mesh[] {
+    return [...this.parts].map(([surface, list]) => {
+      const mesh = new THREE.Mesh(mergeGeometries(list), this.mats.get(surface))
+      for (const geo of list) geo.dispose()
+      mesh.name = `detail:${surface}`
+      mesh.receiveShadow = true
+      return mesh
+    })
+  }
 }
 
 /**
@@ -185,7 +270,8 @@ function scaleBoxUV(geo: THREE.BufferGeometry, sx: number, sy: number, sz: numbe
 export class Materials {
   private cache = new Map<Surface, THREE.MeshStandardMaterial>()
   constructor(
-    private sets: Map<Surface, MapTriplet | null>,
+    /** Keyed by Poly Haven set name; null where that set failed to download. */
+    private sets: Map<string, MapTriplet | null>,
     private style?: EnvironmentStyle,
     private anisotropy = 4
   ) {}
@@ -200,13 +286,17 @@ export class Materials {
    *   drawn pattern. Re-attaching a photographed plaster map there would silently
    *   overwrite the home they generated from their own rooms.
    */
-  replace(surface: Surface, maps: MapTriplet): boolean {
-    if (!this.sets.get(surface)) return false
-    if (stylesSurface(surface, this.style)) return false
-    const previous = this.sets.get(surface)!
-    this.sets.set(surface, maps)
-    const material = this.cache.get(surface)
-    if (material) {
+  replace(name: string, maps: MapTriplet): boolean {
+    const previous = this.sets.get(name)
+    if (!previous) return false
+    // Every surface this set dresses. Surfaces that share a set are styled together
+    // (wood and dark wood take one colour, both fabrics another), so this is all or none.
+    const unstyled = surfacesOf(name).filter((surface) => !stylesSurface(surface, this.style))
+    if (!unstyled.length) return false
+    this.sets.set(name, maps)
+    for (const surface of unstyled) {
+      const material = this.cache.get(surface)
+      if (!material) continue
       material.map = maps.map
       material.roughnessMap = maps.roughnessMap
       material.normalMap = maps.normalMap
@@ -215,6 +305,11 @@ export class Materials {
     // Released only after the replacements are bound, so no frame renders without one.
     for (const t of [previous.map, previous.roughnessMap, previous.normalMap]) t.dispose()
     return true
+  }
+
+  private setFor(surface: Surface): MapTriplet | null {
+    const source = TEXTURE_SET[surface]
+    return source ? this.sets.get(source.name) ?? null : null
   }
 
   get(surface: Surface): THREE.MeshStandardMaterial {
@@ -226,13 +321,15 @@ export class Materials {
       metalness: SURFACE_METALNESS[surface]
     })
     if (surface === 'glass') { m.transparent = true; m.opacity = 0.55 }
-    const maps = this.sets.get(surface)
+    const maps = this.setFor(surface)
     if (maps) {
       m.map = maps.map
       m.roughnessMap = maps.roughnessMap
       m.normalMap = maps.normalMap
       // Tint multiplies into the map; plain white left the plaster a cold grey.
-      m.color.set(surface === 'wall' ? 0xf4ead9 : 0xffffff)
+      const mean = TEXTURE_SET[surface]!.mean
+      if (mean !== undefined) m.color.copy(tintFor(SURFACE_COLOUR[surface], mean))
+      else m.color.set(surface === 'wall' ? 0xf4ead9 : 0xffffff)
     }
     if (this.style) styleMaterial(m, surface, this.style)
     styleAnisotropy(m, this.anisotropy)
@@ -242,23 +339,28 @@ export class Materials {
 
   tileOf(surface: Surface): number | null {
     if (this.style && (surface === 'woodFloor' || surface === 'tileFloor')) return this.style.floorType === 'tile' ? 0.8 : 2
-    return this.sets.get(surface) ? (TEXTURE_SET[surface]?.tile ?? null) : null
+    return this.setFor(surface) ? (TEXTURE_SET[surface]?.tile ?? null) : null
   }
 }
 
-function boxMesh(spec: SolidSpec, mats: Materials): THREE.Mesh {
+function surfacesOf(name: string): Surface[] {
+  return (Object.keys(TEXTURE_SET) as Surface[]).filter((surface) => TEXTURE_SET[surface]!.name === name)
+}
+
+function boxMesh(spec: SolidSpec, mats: Materials, edge: Edge = 'square', surface: Surface = spec.surface): THREE.Mesh {
   const sx = spec.max[0] - spec.min[0]
   const sy = spec.max[1] - spec.min[1]
   const sz = spec.max[2] - spec.min[2]
-  const geo = new THREE.BoxGeometry(sx, sy, sz)
-  const tile = mats.tileOf(spec.surface)
-  if (tile) scaleBoxUV(geo, sx, sy, sz, tile)
-  const mesh = new THREE.Mesh(geo, mats.get(spec.surface))
-  mesh.position.set(
+  const geo = edgeGeometry(sx, sy, sz, edge)
+  const centre = new THREE.Vector3(
     (spec.min[0] + spec.max[0]) / 2,
     (spec.min[1] + spec.max[1]) / 2,
     (spec.min[2] + spec.max[2]) / 2
   )
+  const tile = mats.tileOf(surface)
+  if (tile) projectUV(geo, tile, centre)
+  const mesh = new THREE.Mesh(geo, mats.get(surface))
+  mesh.position.copy(centre)
   mesh.name = spec.id
   mesh.castShadow = spec.castShadow ?? false
   mesh.receiveShadow = true
@@ -267,9 +369,12 @@ function boxMesh(spec: SolidSpec, mats: Materials): THREE.Mesh {
 
 function simpleBox(
   mats: Materials, surface: Surface, x: number, y: number, z: number,
-  sx: number, sy: number, sz: number, cast = true
+  sx: number, sy: number, sz: number, cast = true, edge: Edge = 'bevel'
 ): THREE.Mesh {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mats.get(surface))
+  const geo = edgeGeometry(sx, sy, sz, edge)
+  const tile = mats.tileOf(surface)
+  if (tile) projectUV(geo, tile, { x, y, z })
+  const mesh = new THREE.Mesh(geo, mats.get(surface))
   mesh.position.set(x, y, z)
   mesh.castShadow = cast
   mesh.receiveShadow = true
@@ -348,13 +453,30 @@ class Door {
 
     // Build the slab so the hinge sits at the pivot's origin, on the floor, with the
     // slab extending along local +X.
-    const geo = new THREE.BoxGeometry(slabW, spec.height, slabT)
+    const geo = edgeGeometry(slabW, spec.height, slabT, 'bevel')
+    const tile = mats.tileOf('darkWood')
+    if (tile) projectUV(geo, tile)
     geo.translate(slabW / 2, spec.height / 2, 0)
     const slab = new THREE.Mesh(geo, mats.get('darkWood'))
     slab.castShadow = true
     slab.receiveShadow = true
     slab.name = `${spec.id}-slab`
     this.pivot.add(slab)
+
+    // Two raised panels on each face, upper and lower — what makes a slab read as a door.
+    // Children of the pivot, not the slab: `openBox` below is measured from the slab
+    // alone, so the door's open blocker is unchanged by them.
+    const margin = 0.11
+    const panelW = slabW - margin * 2
+    const lowerH = spec.height * 0.42
+    const upperH = spec.height - lowerH - margin * 3
+    for (const face of [1, -1]) {
+      for (const [h, y] of [[lowerH, margin + lowerH / 2], [upperH, margin * 2 + lowerH + upperH / 2]]) {
+        const panel = simpleBox(mats, 'darkWood', slabW / 2, y, face * (slabT / 2 + 0.006), panelW, h, 0.012, false)
+        panel.name = `${spec.id}-panel`
+        this.pivot.add(panel)
+      }
+    }
 
     const handle = new THREE.Mesh(
       new THREE.CylinderGeometry(0.022, 0.022, 0.09, 10),
@@ -481,7 +603,7 @@ function buildWaterJug(mats: Materials): THREE.Object3D {
   return group
 }
 
-function buildTable(spec: TableSpec, mats: Materials): THREE.Object3D {
+function buildTable(spec: TableSpec, mats: Materials, detail: DetailBatch): THREE.Object3D {
   const group = new THREE.Group()
   group.name = spec.id
   const w = spec.max[0] - spec.min[0]
@@ -491,6 +613,14 @@ function buildTable(spec: TableSpec, mats: Materials): THREE.Object3D {
   group.add(simpleBox(mats, spec.surface, cx, spec.topY - spec.topT / 2, cz, w, spec.topT, d))
   const legH = spec.topY - spec.topT
   const inset = spec.legT / 2 + 0.06
+  // The apron: rails under the top between the legs, as a real table has. Only on a
+  // table tall enough to sit at — on a coffee table it would hide the legs.
+  if (spec.topY > 0.6) {
+    const apron = 0.08, rail = 0.025, below = spec.topY - spec.topT
+    const x0 = cx - w / 2 + inset, x1 = cx + w / 2 - inset, z0 = cz - d / 2 + inset, z1 = cz + d / 2 - inset
+    for (const z of [z0, z1]) detail.box(spec.surface, { x: x0, y: below - apron, z: z - rail / 2 }, { x: x1, y: below, z: z + rail / 2 })
+    for (const x of [x0, x1]) detail.box(spec.surface, { x: x - rail / 2, y: below - apron, z: z0 }, { x: x + rail / 2, y: below, z: z1 })
+  }
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       group.add(simpleBox(
@@ -528,7 +658,7 @@ const WINDOW_NORMAL: Record<WindowSpec['facing'], [number, number, number]> = {
  * pane sits on each face. Cutting a real aperture would mean splitting wall runs
  * horizontally, which buys nothing at this checkpoint.
  */
-function buildWindow(spec: WindowSpec, mats: Materials, wallThickness: number): THREE.Object3D {
+function buildWindow(spec: WindowSpec, mats: Materials, wallThickness: number, detail: DetailBatch): THREE.Object3D {
   const group = new THREE.Group()
   group.name = spec.id
   const n = WINDOW_NORMAL[spec.facing]
@@ -556,6 +686,23 @@ function buildWindow(spec: WindowSpec, mats: Materials, wallThickness: number): 
     const jz = alongX ? 0 : spec.width / 2 + t / 2
     for (const s of [-1, 1]) {
       face.add(simpleBox(mats, 'white', s * jx, 0, s * jz, alongX ? t : t, spec.height, alongX ? t : t, false))
+    }
+    // A glazing bar across and down the middle, and a sill standing out from the wall
+    // below the frame. Static, so they go in the merged detail mesh, in world space.
+    const p = face.position
+    const bar = 0.035
+    const out = side === 0 ? 1 : -1
+    const n0 = (v: number): number => v * out
+    if (alongX) {
+      detail.box('white', { x: p.x - spec.width / 2, y: p.y - bar / 2, z: p.z - bar / 2 }, { x: p.x + spec.width / 2, y: p.y + bar / 2, z: p.z + bar / 2 })
+      detail.box('white', { x: p.x - bar / 2, y: p.y - spec.height / 2, z: p.z - bar / 2 }, { x: p.x + bar / 2, y: p.y + spec.height / 2, z: p.z + bar / 2 })
+      const z0 = p.z, z1 = p.z + n0(n[2] * 0.09)
+      detail.box('white', { x: p.x - spec.width / 2 - 0.1, y: p.y - spec.height / 2 - t - 0.035, z: Math.min(z0, z1) }, { x: p.x + spec.width / 2 + 0.1, y: p.y - spec.height / 2 - t, z: Math.max(z0, z1) })
+    } else {
+      detail.box('white', { x: p.x - bar / 2, y: p.y - bar / 2, z: p.z - spec.width / 2 }, { x: p.x + bar / 2, y: p.y + bar / 2, z: p.z + spec.width / 2 })
+      detail.box('white', { x: p.x - bar / 2, y: p.y - spec.height / 2, z: p.z - bar / 2 }, { x: p.x + bar / 2, y: p.y + spec.height / 2, z: p.z + bar / 2 })
+      const x0 = p.x, x1 = p.x + n0(n[0] * 0.09)
+      detail.box('white', { x: Math.min(x0, x1), y: p.y - spec.height / 2 - t - 0.035, z: p.z - spec.width / 2 - 0.1 }, { x: Math.max(x0, x1), y: p.y - spec.height / 2 - t, z: p.z + spec.width / 2 + 0.1 })
     }
     group.add(face)
   }
@@ -758,6 +905,92 @@ function buildFrameAnchor(width: number, height: number, mats: Materials): THREE
   plate.name = ANCHOR_PLATE
   group.add(plate)
   return group
+}
+
+// ---------------------------------------------------------------------------
+// Fitted detail
+// ---------------------------------------------------------------------------
+
+const TOP_T = 0.04
+const TOP_OVERHANG = 0.02
+const SKIRTING_H = 0.09
+const SKIRTING_T = 0.014
+
+/**
+ * A kitchen counter declared as one solid is drawn as what it is: a wooden base unit
+ * under a stone top that overhangs it slightly, with the seams of its cupboard doors and
+ * a drawer line. Which face is the front is not in the data, so the seams go on both long
+ * faces; the one against the wall is never seen. The blocker is the declared box.
+ */
+function kitchenUnit(spec: SolidSpec, mats: Materials, detail: DetailBatch): THREE.Mesh[] {
+  const [x0, y0, z0] = spec.min
+  const [x1, y1, z1] = spec.max
+  const top = y1 - TOP_T
+  const body = boxMesh({ ...spec, max: [x1, top, z1] }, mats, 'bevel', 'wood')
+  body.name = `${spec.id}-unit`
+  const slab = boxMesh({
+    ...spec,
+    min: [x0 - TOP_OVERHANG, top, z0 - TOP_OVERHANG],
+    max: [x1 + TOP_OVERHANG, y1, z1 + TOP_OVERHANG]
+  }, mats, 'bevel')
+  slab.name = `${spec.id}-top`
+
+  const seam = 0.006, proud = 0.003
+  const alongX = x1 - x0 >= z1 - z0
+  const from = alongX ? x0 : z0, to = alongX ? x1 : z1
+  const doors = Math.max(1, Math.round((to - from) / 0.6))
+  const step = (to - from) / doors
+  const drawer = top - 0.18
+  for (const face of alongX ? [z0, z1] : [x0, x1]) {
+    const lo = face - proud, hi = face + proud
+    for (let i = 1; i < doors; i++) {
+      const c = from + i * step
+      if (alongX) detail.box('dark', { x: c - seam / 2, y: y0 + 0.1, z: lo }, { x: c + seam / 2, y: top, z: hi })
+      else detail.box('dark', { x: lo, y: y0 + 0.1, z: c - seam / 2 }, { x: hi, y: top, z: c + seam / 2 })
+    }
+    if (alongX) detail.box('dark', { x: from, y: drawer - seam / 2, z: lo }, { x: to, y: drawer + seam / 2, z: hi })
+    else detail.box('dark', { x: lo, y: drawer - seam / 2, z: from }, { x: hi, y: drawer + seam / 2, z: to })
+    // The kick: a dark recess line at the foot of the unit.
+    if (alongX) detail.box('dark', { x: from, y: y0, z: lo }, { x: to, y: y0 + 0.1, z: hi })
+    else detail.box('dark', { x: lo, y: y0, z: from }, { x: hi, y: y0 + 0.1, z: to })
+  }
+  return [body, slab]
+}
+
+/**
+ * Skirting boards along the foot of every full-height wall segment, on both faces of an
+ * interior wall and on the inside face of an exterior one. They stop at every opening,
+ * because the segments do. 9 cm high: under the player body (§1.1 — nothing below
+ * `PLAYER_BODY_MIN_Y` meets it), so they are drawn and never collide.
+ */
+function addSkirting(t: Template, detail: DetailBatch): void {
+  let cx0 = Infinity, cx1 = -Infinity, cz0 = Infinity, cz1 = -Infinity
+  for (const r of t.rooms) {
+    cx0 = Math.min(cx0, r.min[0]); cx1 = Math.max(cx1, r.max[0])
+    cz0 = Math.min(cz0, r.min[2]); cz1 = Math.max(cz1, r.max[2])
+  }
+  const centre = { x: (cx0 + cx1) / 2, z: (cz0 + cz1) / 2 }
+  // The run, not the segment's shape, says which way a wall runs: a stub between two
+  // close openings can be shorter than the wall is thick.
+  for (const run of t.walls) for (const seg of expandWall(run, t.openings)) {
+    if (seg.blocking === false) continue
+    const [x0, , z0] = seg.min
+    const [x1, , z1] = seg.max
+    const alongX = run.axis === 'x'
+    const exterior = run.id.startsWith('ext-')
+    const faces: (1 | -1)[] = exterior
+      ? [alongX ? (centre.z > (z0 + z1) / 2 ? 1 : -1) : (centre.x > (x0 + x1) / 2 ? 1 : -1)]
+      : [1, -1]
+    for (const f of faces) {
+      if (alongX) {
+        const z = f > 0 ? z1 : z0
+        detail.box('white', { x: x0, y: 0, z: Math.min(z, z + f * SKIRTING_T) }, { x: x1, y: SKIRTING_H, z: Math.max(z, z + f * SKIRTING_T) })
+      } else {
+        const x = f > 0 ? x1 : x0
+        detail.box('white', { x: Math.min(x, x + f * SKIRTING_T), y: 0, z: z0 }, { x: Math.max(x, x + f * SKIRTING_T), y: SKIRTING_H, z: z1 })
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -981,6 +1214,7 @@ export function buildHouse(template: Template, opts: BuildOptions): HouseWorld {
   const root = new THREE.Group()
   root.name = 'proceduralHouse'
   const blockers: THREE.Box3[] = []
+  const detail = new DetailBatch(mats)
 
   // ---- Ground, floors, ceilings ----
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(140, 140), mats.get('grass'))
@@ -1046,21 +1280,27 @@ export function buildHouse(template: Template, opts: BuildOptions): HouseWorld {
 
   // ---- Walls, furniture, porch and fence ----
   const walls = t.walls.flatMap((run) => expandWall(run, t.openings))
+  const furniture = new Set(t.furniture)
   for (const spec of [...walls, ...t.furniture, ...t.exterior, ...t.garden.fence]) {
     // `invisible` specs are blockers only — props whose visible form is built from
     // primitives further down (the toilet).
     if (!spec.invisible) {
-      const mesh = boxMesh(spec, mats)
-      if (spec.surface === 'wall' && spec.id.startsWith('ext-')) mesh.castShadow = true
-      root.add(mesh)
+      if (furniture.has(spec) && spec.surface === 'counter' && spec.max[1] - spec.min[1] > 0.3) {
+        for (const mesh of kitchenUnit(spec, mats, detail)) root.add(mesh)
+      } else {
+        const mesh = boxMesh(spec, mats, !furniture.has(spec) ? 'square' : spec.soft ? 'soft' : 'bevel')
+        if (spec.surface === 'wall' && spec.id.startsWith('ext-')) mesh.castShadow = true
+        root.add(mesh)
+      }
     }
     if (spec.blocking !== false) {
       blockers.push(new THREE.Box3(new THREE.Vector3(...spec.min), new THREE.Vector3(...spec.max)))
     }
   }
+  addSkirting(t, detail)
 
   for (const spec of t.tables) {
-    root.add(buildTable(spec, mats))
+    root.add(buildTable(spec, mats, detail))
     blockers.push(new THREE.Box3(
       new THREE.Vector3(spec.min[0], 0, spec.min[1]),
       new THREE.Vector3(spec.max[0], spec.topY, spec.max[1])
@@ -1075,7 +1315,7 @@ export function buildHouse(template: Template, opts: BuildOptions): HouseWorld {
     ))
   }
 
-  for (const spec of t.windows) root.add(buildWindow(spec, mats, 0.24))
+  for (const spec of t.windows) root.add(buildWindow(spec, mats, 0.24, detail))
 
   for (const spec of t.plants) {
     const plant = buildPlant(mats, spec.scale)
@@ -1250,6 +1490,9 @@ export function buildHouse(template: Template, opts: BuildOptions): HouseWorld {
   interactables['radio'] = audioSource
   hintTargets['radio'] = audioSource
 
+  // Everything that never moves, merged: one mesh per surface.
+  for (const mesh of detail.meshes()) root.add(mesh)
+
   // ---- World ----
   const triggers = t.rooms.map((r) => ({
     room: r.id,
@@ -1316,22 +1559,20 @@ export async function createProceduralHouse(
 
   const texturesLoaded: string[] = []
   const texturesFailed: string[] = []
-  const sets = new Map<Surface, MapTriplet | null>()
+  const sets = new Map<string, MapTriplet | null>()
 
-  const surfaces = Object.keys(TEXTURE_SET) as Surface[]
   // Three maps per set — diffuse, roughness, normal. The denominator is known before
   // the first request, which is the whole reason this can be an honest count.
-  const textureTotal = surfaces.length * 3
+  const textureTotal = TEXTURE_NAMES.length * 3
   let textureDone = 0
   let textureFailed = 0
   onProgress?.('textures', 0, 0, textureTotal)
 
   await Promise.all(
-    surfaces.map(async (surface) => {
-      const { name } = TEXTURE_SET[surface]!
+    TEXTURE_NAMES.map(async (name) => {
       try {
         sets.set(
-          surface,
+          name,
           await loadSet(loader, name, { resolution, anisotropy }, (fileOk) => {
             if (fileOk) textureDone++
             else textureFailed++
@@ -1341,7 +1582,7 @@ export async function createProceduralHouse(
         texturesLoaded.push(name)
       } catch {
         // Degradation contract: flat colour, keep going, never block the load.
-        sets.set(surface, null)
+        sets.set(name, null)
         texturesFailed.push(name)
       }
     })
@@ -1390,15 +1631,14 @@ export async function createProceduralHouse(
   const upgradeTextures = async (to: TextureResolution): Promise<UpgradeReport> => {
     const upgraded: string[] = []
     const failed: string[] = []
-    for (const surface of surfaces) {
-      const { name } = TEXTURE_SET[surface]!
-      if (!sets.get(surface) || stylesSurface(surface, environment)) {
+    for (const name of TEXTURE_NAMES) {
+      if (!sets.get(name) || surfacesOf(name).every((surface) => stylesSurface(surface, environment))) {
         failed.push(name)
         continue
       }
       try {
         const maps = await loadSet(loader, name, { resolution: to, anisotropy, timeoutMs: UPGRADE_TIMEOUT_MS }, () => {})
-        if (mats.replace(surface, maps)) upgraded.push(name)
+        if (mats.replace(name, maps)) upgraded.push(name)
         else {
           for (const t of [maps.map, maps.roughnessMap, maps.normalMap]) t.dispose()
           failed.push(name)

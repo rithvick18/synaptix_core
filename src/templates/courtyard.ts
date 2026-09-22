@@ -132,12 +132,12 @@ export const courtyard: Template = {
 
     // ---- Living room: x [E_ROOM, X1], z [KL + H, Z1] ----
     { id: 'lr-rug', min: [4.6, 0, 1.4], max: [6.8, 0.012, 3.8], surface: 'accent' },
-    { id: 'sofa-base', min: [X1 - 1.0, 0, 1.2], max: [X1, 0.42, 3.8], surface: 'fabric', castShadow: true },
-    { id: 'sofa-back', min: [X1 - 0.25, 0.42, 1.2], max: [X1, 1.0, 3.8], surface: 'fabric', castShadow: true },
-    { id: 'sofa-arm-n', min: [X1 - 1.0, 0.42, 1.2], max: [X1, 0.7, 1.42], surface: 'fabric', castShadow: true },
-    { id: 'sofa-arm-s', min: [X1 - 1.0, 0.42, 3.58], max: [X1, 0.7, 3.8], surface: 'fabric', castShadow: true },
-    { id: 'sofa-cushion-1', min: [X1 - 0.97, 0.42, 1.52], max: [X1 - 0.25, 0.54, 2.47], surface: 'fabric' },
-    { id: 'sofa-cushion-2', min: [X1 - 0.97, 0.42, 2.57], max: [X1 - 0.25, 0.54, 3.52], surface: 'fabric' },
+    { id: 'sofa-base', min: [X1 - 1.0, 0, 1.2], max: [X1, 0.42, 3.8], surface: 'fabric', castShadow: true, soft: true },
+    { id: 'sofa-back', min: [X1 - 0.25, 0.42, 1.2], max: [X1, 1.0, 3.8], surface: 'fabric', castShadow: true, soft: true },
+    { id: 'sofa-arm-n', min: [X1 - 1.0, 0.42, 1.2], max: [X1, 0.7, 1.42], surface: 'fabric', castShadow: true, soft: true },
+    { id: 'sofa-arm-s', min: [X1 - 1.0, 0.42, 3.58], max: [X1, 0.7, 3.8], surface: 'fabric', castShadow: true, soft: true },
+    { id: 'sofa-cushion-1', min: [X1 - 0.97, 0.42, 1.52], max: [X1 - 0.25, 0.54, 2.47], surface: 'fabric', soft: true },
+    { id: 'sofa-cushion-2', min: [X1 - 0.97, 0.42, 2.57], max: [X1 - 0.25, 0.54, 3.52], surface: 'fabric', soft: true },
     { id: 'tv-unit', min: [4.4, 0, Z1 - 0.45], max: [6.6, 0.5, Z1], surface: 'darkWood', castShadow: true },
     { id: 'tv-screen', min: [4.9, 0.55, Z1 - 0.23], max: [6.4, 1.4, Z1 - 0.15], surface: 'dark', castShadow: true },
 
@@ -155,10 +155,10 @@ export const courtyard: Template = {
     { id: 'bd-rug', min: [X0 + 1.3, 0, -2.6], max: [X0 + 3.4, 0.012, -1.0], surface: 'accent' },
     { id: 'headboard', min: [X0, 0, -4.6], max: [X0 + 0.14, 1.15, -2.5], surface: 'darkWood', castShadow: true },
     { id: 'bed-frame', min: [X0 + 0.08, 0, -4.5], max: [X0 + 2.3, 0.34, -2.6], surface: 'darkWood', castShadow: true },
-    { id: 'mattress', min: [X0 + 0.1, 0.34, -4.46], max: [X0 + 2.24, 0.64, -2.64], surface: 'white', castShadow: true },
-    { id: 'duvet', min: [X0 + 0.95, 0.64, -4.46], max: [X0 + 2.24, 0.75, -2.64], surface: 'fabricWarm' },
-    { id: 'pillow-1', min: [X0 + 0.16, 0.64, -4.32], max: [X0 + 0.58, 0.78, -3.74], surface: 'white' },
-    { id: 'pillow-2', min: [X0 + 0.16, 0.64, -3.44], max: [X0 + 0.58, 0.78, -2.86], surface: 'white' },
+    { id: 'mattress', min: [X0 + 0.1, 0.34, -4.46], max: [X0 + 2.24, 0.64, -2.64], surface: 'white', castShadow: true, soft: true },
+    { id: 'duvet', min: [X0 + 0.95, 0.64, -4.46], max: [X0 + 2.24, 0.75, -2.64], surface: 'fabricWarm', soft: true },
+    { id: 'pillow-1', min: [X0 + 0.16, 0.64, -4.32], max: [X0 + 0.58, 0.78, -3.74], surface: 'white', soft: true },
+    { id: 'pillow-2', min: [X0 + 0.16, 0.64, -3.44], max: [X0 + 0.58, 0.78, -2.86], surface: 'white', soft: true },
     { id: 'bedside-table', min: [X0, 0, -2.4], max: [X0 + 0.5, 0.55, -1.9], surface: 'wood', castShadow: true },
     { id: 'wardrobe', min: [X0 + 1.4, 0, Z0], max: [X0 + 3.25, 2.15, Z0 + 0.7], surface: 'wood', castShadow: true },
     { id: 'wardrobe-handle-l', min: [X0 + 2.28, 1.0, Z0 + 0.66], max: [X0 + 2.33, 1.35, Z0 + 0.75], surface: 'metal' },
@@ -175,7 +175,7 @@ export const courtyard: Template = {
     { id: 'vanity', min: [X0 + 2.4, 0, BATH_STORE_N - 0.63], max: [X0 + 3.6, 0.86, BATH_STORE_N], surface: 'wood', castShadow: true },
     { id: 'vanity-top', min: [X0 + 2.35, 0.86, BATH_STORE_N - 0.68], max: [X0 + 3.65, 0.93, BATH_STORE_N + 0.02], surface: 'counter' },
     { id: 'mirror', min: [X0 + 2.45, 1.15, BATH_STORE_N - 0.03], max: [X0 + 3.55, 1.85, BATH_STORE_N], surface: 'mirror', blocking: false },
-    { id: 'bath-mat', min: [X0 + 2.1, 0, 0.0], max: [X0 + 3.1, 0.014, 1.0], surface: 'fabric' },
+    { id: 'bath-mat', min: [X0 + 2.1, 0, 0.0], max: [X0 + 3.1, 0.014, 1.0], surface: 'fabric', soft: true },
     { id: 'toilet-blocker', min: [X0 + 0.15, 0, 1.69], max: [X0 + 0.8, 0.75, 2.21], surface: 'white', invisible: true },
 
     // ---- Store room: x [X0, W_ROOM], z [BATH_STORE + H, Z1] ----

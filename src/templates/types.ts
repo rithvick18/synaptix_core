@@ -34,6 +34,11 @@ export interface SolidSpec {
   /** Blocker only, no mesh. For props whose visible form is built in code. */
   invisible?: boolean
   castShadow?: boolean
+  /**
+   * Upholstery and bedding: drawn with well-rounded edges, where every other piece of
+   * furniture gets only a small bevel. Appearance only — the blocker is still `min`/`max`.
+   */
+  soft?: boolean
 }
 
 export interface RoomSpec {

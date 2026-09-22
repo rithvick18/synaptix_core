@@ -30,6 +30,9 @@ const suffix = process.argv.includes('--capture') ? '.capture.ts' : '.check.ts'
 
 const esbuild = path.join(root, 'node_modules', '.bin', 'esbuild')
 const three = path.join(root, 'node_modules', 'three', 'build', 'three.module.js')
+// `three` is aliased to one file, so its add-ons need their own entry: without it
+// `three/examples/jsm/...` would resolve under `three.module.js/`.
+const threeExamples = path.join(root, 'node_modules', 'three', 'examples')
 
 const checks = readdirSync(here)
   .filter((f) => f.endsWith(suffix))
@@ -69,6 +72,7 @@ try {
         '--format=esm',
         '--platform=node',
         '--log-level=warning',
+        `--alias:three/examples=${threeExamples}`,
         `--alias:three=${three}`,
         `--outfile=${bundle}`
       ],
