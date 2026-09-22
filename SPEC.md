@@ -251,7 +251,7 @@ src/
         "instruction": "Please go to the kitchen.",
         "hints": { "repeat": "Please go to the kitchen.",
                    "highlight": "kitchenDoor",
-                   "guide": "The kitchen is through this door." } },
+                   "guide": "The kitchen is this way." } },
       { "type": "find", "targetObject": "water-jug",
         "instruction": "Can you find the water jug?",
         "hints": { "repeat": "Can you find the water jug?",
@@ -580,9 +580,10 @@ report that alongside. Check the cap by timing `requestAnimationFrame` on a blan
 
   | Command | What it does |
   | --- | --- |
-  | `npm run check` | Typechecks the harnesses against `src/`, then runs them headlessly under node — pack validation in both choice formats, the hint ladder, aggregation, level switching, and for every template × mirror the §11.6 snapshot and determinism, the audits, the §11.2 role checks and the §11.3 mirror checks |
+  | `npm run check` | Typechecks the harnesses against `src/`, then runs them headlessly under node — pack validation in both choice formats, the hint ladder, aggregation, level switching, and for every template × mirror the §11.6 snapshot and determinism, the audits, `canFocus`, the §11.2 role checks, the §11.3 mirror checks, the §11.4 fence and storey checks, and every bundled level played in that house |
   | `npm run check:offline` | Serves `dist/` with the vendored `vite preview` and, for every registered template × mirror, runs the audits and drives all three levels in headless Chrome with DNS disabled |
-  | `npm run build` | `tsc && vite build` |
+  | `npm run build` | `tsc`, then the headless §11.5 audits (`node tools/checks/run.mjs world`), then `vite build` — a template that fails an audit fails the build |
+  | `node tools/perf-templates.mjs` | §7 frame time for every template × mirror, in a visible Chrome window on this machine's GPU: the game's own 300-frame sampler plus the `gl.finish()` render cost from spawn and from the living room |
 
   The offline check typechecks nothing and the unit checks open no browser; both are
   needed. Run `npm run build` before `npm run check:offline`.
@@ -1252,6 +1253,21 @@ way"), and `tools/checks/pack.check.ts` runs every bundled level against every t
 hint that says *door* fails if its target resolves to an arch in any template. This is the
 §4.5 rule — describe only what exists — applied across templates.
 
+**As built (G2).** The bundled navigate guides now say where, not through what: "The kitchen
+is this way", "The living room is this way", "The living room is back this way". Local §9
+profiles reuse the bundled navigate and find steps, so they inherit the same text.
+`pack.check.ts` does two things per bundled pack. It checks the wording against every
+registered template's openings. It also builds every template in both orientations,
+validates the pack against that house, and plays each level to the end in it. On every step
+the hint ladder is taken to level 3 first, so the level-2 beacon must fit around the real
+target and the level-3 guide must be the text on screen.
+
+`openPlan`'s threshold marker is declared, like every opening, in the template's `openings`:
+an `arch` on the counter's centreline, as deep as the counter, 1 cm high. No wall run lies on
+that line, so nothing is cut, and the generator's opening trim — two jambs and a head at the
+opening's height — lies on the floor as a strip across the gap. That strip is the hint
+target. It is not a blocker; trims never are.
+
 ### 11.3 Mirroring
 
 The caregiver may flip any template left-to-right.
@@ -1295,6 +1311,22 @@ its wood and an empty plate render darker. Photographs are unlit (§9) and are u
 
 All four fit inside the existing garden fence, use a 2.7 m ceiling, and are single-storey.
 
+**As built (G2).** Every template is a data file; none needed a generator change. Each
+shares `hallway`'s garden (the same fence and trees) and puts the front door at x = 0 on the
+south wall, so the path meets the gap in the fence.
+
+| id | Rooms beyond the required two | Role openings |
+| --- | --- | --- |
+| `row` | `frontRoom`, `bedroom`, `bathroom`, `passage` | `livingArch`: front room → living room arch; `kitchenArch`: living room → kitchen arch; `kitchenDoor`: passage → kitchen door. The passage opens off the front room by `passageArch` |
+| `openPlan` | `foyer`, `bedroom`, `bathroom` | the foyer opens west into the living room by `livingArch` (an arch) and east into the kitchen by `kitchenDoor` (a door); `kitchenArch` is the threshold strip in the counter's gap (§11.2); bedroom and bathroom doors open off the living room |
+| `courtyard` | `bedroom`, `bathroom`, `storeRoom` | the west range (bedroom, bathroom, store) and east range (kitchen, living room) face each other across the courtyard; `livingArch` and `kitchenDoor` open off the east verandah; `kitchenArch` joins kitchen and living room inside the east range |
+
+In `courtyard`, the courtyard and the verandah are not rooms. The generator gives every room
+a ceiling and a ceiling light, and an open courtyard can have neither. The verandah is roofed
+by three exterior roof sections, which leave the courtyard open to the sky, and floored by a
+slab. `roomOf` returns null in both, as it does outside the house. The ranges face each other
+east and west; the back is a verandah along the north wall, not a third range.
+
 ### 11.5 Every template × mirror is audited, or it doesn't ship
 
 For each registered template, in both orientations:
@@ -1309,6 +1341,19 @@ For each registered template, in both orientations:
 
 **If any template fails any audit, the build fails.** A failing template cannot be shipped
 by quietly leaving it out of the registry.
+
+**As built (G2).** `npm run build` runs `tsc`, then `node tools/checks/run.mjs world`, then
+`vite build`. That world check runs, for every registered template in both orientations:
+both audits, the §11.2 role checks, the highlightable check, the §11.4 fence and storey
+checks, and a headless `canFocus`. The headless `canFocus` uses the real
+`Interaction.update`, with its 2.5 m limit and occlusion test. It is stricter than the
+browser probe in two ways. The spot must be walkable from spawn, and it must be in the room
+the levels look for the object in: `kitchen` for the jug, `livingRoom` for the radio and the
+photograph. Without that second rule, a photograph pushed through the wall passed, because
+it could be focused from the garden.
+
+The browser-only items — the real `debug.canFocus` and all three levels played in the
+running game — stay in `npm run check:offline`. The build cannot run a browser.
 
 ### 11.6 Determinism and the regression snapshot
 
@@ -1375,6 +1420,7 @@ true in `hallway`, the only registered template. The check §11.2 asks for is bu
 that calls a door an arch or an arch a door — so the first template that makes
 `kitchenDoor` an arch or `livingArch` a door will fail `npm run check` until the text is
 neutralised. Patient-facing text was left unchanged in G1 on purpose.
+*Resolved in G2:* the text is neutral (§11.2, "As built (G2)").
 
 **G1-2 — `kitchenArch` was not a required hint target in code.** §1 always listed it;
 `REQUIRED_HINT_TARGETS` in `World.ts` did not, so `assertWorldContract` never checked it.
@@ -1398,3 +1444,56 @@ on SwiftShader, which §7 does not accept as the figure. A byte-identical pixel 
 of six viewpoints before and after the refactor (headless, offline, not committed) is
 evidence that the unmirrored draw workload is unchanged. It is not a frame-time
 measurement.
+*Resolved in G2:* every template × mirror, `hallway · mirrored` included, is measured on a
+real GPU (G2-4).
+
+The ones from building G2 (the `row`, `openPlan` and `courtyard` templates, 2026-09-22):
+
+**G2-1 — `openPlan`'s threshold marker is an arch trim laid flat, not a marker kind.**
+§11.2 asks for "a visible threshold marker (a floor strip, or the end of a counter)" and
+§11.1 says a template needing generator changes must update this section first. G2 made no
+generator change. The marker is declared as an `arch` opening on no wall run, with a 1 cm
+height (§11.2, "As built (G2)"), so the unchanged trim builder draws it as a strip 7 cm high.
+It works and it is data only, but it relies on how trims are built. A dedicated `marker`
+opening kind would say what it is. That would be a generator change, which G2's brief
+forbade, so it is left for a later checkpoint.
+
+**G2-2 — `courtyard`'s rooms are on two sides of the courtyard, not all four.** §11.4
+says "rooms around an open central courtyard". As built, a west range and an east range face
+each other across it. The back is a verandah along the north wall, and the front is the
+entrance wall with the front door. A third range across the back would add a sixth
+ceiling-lit room and the shadow-casting light that comes with it (§11.4, "As built (G2)").
+
+**G2-3 — The build runs only the headless audits.** §11.5 says the build fails if any
+template fails any audit, and its list includes "all three bundled levels play through in
+`npm run check:offline`" and a frame-time figure. `npm run build` now fails on every
+headless audit, including a headless `canFocus`. It cannot fail on the browser-only items,
+because `vite build` has no browser to run and the offline check needs the built `dist/`.
+Those remain the job of `npm run check:offline`, run after the build.
+
+**G2-4 — Frame time is measured on the development machine, which may not be the demo
+machine.** §11.5 requires a figure per template under §7's rules. `node tools/perf-templates.mjs`
+produced one on 2026-09-22 under these conditions:
+
+- Machine: MacBook Air, Mac16,13, Apple M4, 16 GB, macOS 26.5.2.
+- Browser: Chrome 153, drawing through ANGLE on Metal.
+- Window: visible, 2560×1426 at pixelRatio 2, where the adaptive ladder settled.
+- Textures: 2k, with the network on.
+
+The game's own 300-frame sampler, taken at spawn, reads 16.7 ms median in every
+configuration, with p95 between 17.1 and 17.7 ms. That is the 60 Hz refresh interval: a
+v-sync reading, not a cost (§7). The cost itself, as `gl.finish()` render time over 200 draws:
+
+| Template | Spawn view, median / p95 | Living room view, median / p95 |
+| --- | --- | --- |
+| `hallway` | 5.7 / 6.6 ms | 6.2 / 7.6 ms |
+| `hallway · mirrored` | 5.5 / 6.6 ms | 6.3 / 7.3 ms |
+| `row` | 6.3 / 7.0 ms | 8.1 / 8.9 ms |
+| `row · mirrored` | 6.3 / 6.9 ms | 7.8 / 9.0 ms |
+| `openPlan` | 5.1 / 5.8 ms | 5.5 / 6.9 ms |
+| `openPlan · mirrored` | 5.1 / 5.8 ms | 5.7 / 7.2 ms |
+| `courtyard` | 4.7 / 5.4 ms | 5.4 / 6.4 ms |
+| `courtyard · mirrored` | 4.7 / 5.3 ms | 5.4 / 5.9 ms |
+
+If the demo machine is a different computer, these figures are not its figures, and the
+command must be run there.

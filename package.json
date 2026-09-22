@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && node tools/checks/run.mjs world && vite build",
     "preview": "vite preview",
     "check:offline": "node tools/offline-check.mjs",
     "check": "node tools/checks/run.mjs",

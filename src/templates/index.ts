@@ -6,10 +6,13 @@
  * `npm run check:offline` (§11.5); a template that fails cannot be shipped by leaving
  * it out of this list, because this list is what ships.
  */
+import { courtyard } from './courtyard'
 import { hallway } from './hallway'
+import { openPlan } from './openPlan'
+import { row } from './row'
 import type { Template } from './types'
 
-export const TEMPLATES: Readonly<Record<string, Template>> = { hallway }
+export const TEMPLATES: Readonly<Record<string, Template>> = { hallway, row, openPlan, courtyard }
 
 export const DEFAULT_TEMPLATE_ID = 'hallway'
 

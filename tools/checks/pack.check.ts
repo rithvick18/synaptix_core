@@ -66,6 +66,7 @@ import { MissionRunner, type MemoryPack, type Mission } from '../../src/Missions
 import type { ChoiceCard } from '../../src/ui'
 import { Telemetry, type Event, type Outcome } from '../../src/Telemetry'
 import type { WorldSource } from '../../src/World'
+import { buildHouse } from '../../src/proceduralHouse'
 import { TEMPLATES } from '../../src/templates'
 
 // ---------------------------------------------------------------------------
@@ -961,6 +962,89 @@ function toRecall(r: Rig): void {
   t.state.timersRunning = true
   t.runner.update()
   eq(t.runner.level, 3, '§5.1 the ladder catches up once the clock runs again')
+}
+
+// ---------------------------------------------------------------------------
+// 7. §11.2 — every bundled level, played in every template, both ways round
+// ---------------------------------------------------------------------------
+//
+// The stub world above has the §1 ids and nothing else. This runs the same levels in
+// the houses that ship. Each pack validates against the built house; then each level
+// is played to its end with the hint ladder taken to level 3 on every step first, so
+// the level-2 beacon has to fit around the real target and the level-3 guide is the
+// text on screen. A navigate step completes when the player is put in the target
+// room's trigger (which `roomOf` must confirm), a find step on E, a question on its
+// answer. That the rooms can be *walked* to is world.check.ts's job, not this one's.
+
+class PlacedPlayer {
+  readonly at = new THREE.Vector3()
+  releaseLock(): void {}
+  requestLock(): void {}
+  groundPoint(target = new THREE.Vector3()): THREE.Vector3 {
+    return target.copy(this.at)
+  }
+}
+
+for (const id of ['mira', 'raju']) {
+  for (const template of Object.values(TEMPLATES)) {
+    for (const mirror of [false, true]) {
+      const house = buildHouse(template, { mirror })
+      const name = `${id} in ${template.id}${mirror ? ' · mirrored' : ''}`
+      const { pack, problems } = validate(readPack(id), house)
+      ok(pack !== null && problems.length === 0,
+        `§11.2 ${name}: the pack validates against the built house — ${problems.map((p) => p.code).join(', ')}`)
+      if (!pack) continue
+      const { media } = await mediaFor(pack)
+
+      for (const mission of pack.missions) {
+        const player = new PlacedPlayer()
+        player.at.copy(house.spawn.position)
+        const state = new FakeState()
+        const ui = new FakeUI()
+        const events: Event[] = []
+        const telemetry = new Telemetry(() => state.elapsed())
+        telemetry.onEvent = (e) => events.push(e)
+        const runner = new MissionRunner({
+          pack, mission, world: house, player: player as never, state: state as never, telemetry,
+          ui: ui as never, media, voices: new FakeVoices() as never, levelLabel: mission.id
+        })
+        const beacon = (): THREE.Object3D | undefined => house.root.getObjectByName('hint-beacon')
+        const wrong: string[] = []
+        runner.start()
+        mission.steps.forEach((step, index) => {
+          const at = `step ${index + 1}`
+          if (runner.stepIndex !== index) { wrong.push(`${at} never began`); return }
+          state.advance(76_000)
+          runner.update()
+          if (runner.level !== 3 || ui.hint !== step.hints.guide) wrong.push(`${at}: the level-3 guide is not on screen`)
+
+          if (step.type === 'recall') {
+            ;(ui.card!.onSelect as (choice: string) => void)(step.answer)
+            return
+          }
+          const target = house.hintTargets[step.hints.highlight]
+          const glow = beacon()
+          if (!target) wrong.push(`${at}: hint target ${step.hints.highlight} is not in the house`)
+          else if (!glow?.visible ||
+            !new THREE.Box3().setFromObject(glow).containsBox(new THREE.Box3().setFromObject(target))) {
+            wrong.push(`${at}: the beacon is not around ${step.hints.highlight}`)
+          }
+          if (step.type === 'find') {
+            runner.notifyInteract(step.targetObject)
+            return
+          }
+          const room = house.triggers.find((t) => t.room === step.targetRoom)
+          if (!room) { wrong.push(`${at}: ${step.targetRoom} is not a room in this house`); return }
+          room.box.getCenter(player.at).setY(0)
+          if (house.roomOf(player.at) !== step.targetRoom) wrong.push(`${at}: the centre of ${step.targetRoom} is not in it`)
+          runner.notifyRoom(house.roomOf(player.at))
+        })
+        ok(wrong.length === 0 && state.current === 'completed' && events.some((e) => e.kind === 'mission_complete'),
+          `§11.2 ${name}: level "${mission.id}" plays through, every hint on its real target — ${wrong.join('; ')}`)
+        runner.dispose()
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

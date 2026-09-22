@@ -5,7 +5,10 @@
  *   §11.6  `buildHouse(hallway, { mirror: false })` matches the pre-G1 snapshot with
  *          zero diffs at epsilon 1e-6, and two builds of any (template, mirror) are
  *          identical
- *   §11.5  both audits report clean, and every §1 required id is present
+ *   §11.5  both audits report clean, every §1 required id is present, and canFocus
+ *          reaches each find target from a spot walkable from spawn, in the room the
+ *          levels look for it in
+ *   §11.4  every template is single-storey at 2.7 m and fits inside the one garden fence
  *   §11.2  `kitchenArch` directly connects `livingRoom` and `kitchen`; a route from spawn
  *          enters each through its role opening; every hint target can glow
  *   §11.3  the mirrored build is the exact reflection of the unmirrored one, nothing in
@@ -17,7 +20,8 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as THREE from 'three'
-import { PLAYER_BODY_MAX_Y, PLAYER_BODY_MIN_Y, PLAYER_RADIUS } from '../../src/layout'
+import { Interaction } from '../../src/Interaction'
+import { CEILING_HEIGHT, PLAYER_BODY_MAX_Y, PLAYER_BODY_MIN_Y, PLAYER_RADIUS } from '../../src/layout'
 import { ANCHOR_PLATE, buildHouse, type HouseWorld } from '../../src/proceduralHouse'
 import { TEMPLATES, templateFromLocation } from '../../src/templates'
 import type { OpeningSpec } from '../../src/templates/types'
@@ -172,6 +176,7 @@ function cellIn(world: HouseWorld, g: Grid, roomId: string): number {
 // ---------------------------------------------------------------------------
 
 const auditLines: string[] = []
+const focusLines: string[] = []
 
 for (const { template, mirror, name } of configs) {
   const world = buildHouse(template, { mirror })
@@ -234,6 +239,73 @@ for (const { template, mirror, name } of configs) {
       `${meshes} visible mesh(es), bounds ${size.toArray().map((v) => v.toFixed(2)).join(' × ')}`)
   }
 
+  // ---- §11.5: canFocus reaches every required interactable ----
+  //
+  // The browser's `debug.canFocus` (§1), run headlessly so the build can fail on it:
+  // the real `Interaction.update` — its 2.5 m limit and its ray-vs-Box3 occlusion —
+  // aimed from standable spots nearest-first. Stricter than the browser probe in two
+  // ways: the spot must be one the player can walk to from spawn, and it must be in the
+  // room the levels send the player to before asking for the object — a photograph
+  // visible only from the garden, through a gap in the wall, is not "in here".
+  const fromSpawn = flood(g, spawn, () => true)
+  const interaction = new Interaction(world)
+  const camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.05, 100)
+  const body = new THREE.Box3()
+  const probe = new THREE.Vector3()
+  world.root.updateMatrixWorld(true)
+  const findIn = { 'water-jug': 'kitchen', radio: 'livingRoom', 'wall-photo': 'livingRoom' }
+  for (const [id, room] of Object.entries(findIn)) {
+    const centre = new THREE.Box3().setFromObject(world.interactables[id]).getCenter(new THREE.Vector3())
+    const spots: THREE.Vector3[] = []
+    for (let ring = 1; ring <= 16; ring++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dz = -ring; dz <= ring; dz++) {
+          if (Math.abs(dx) !== ring && Math.abs(dz) !== ring) continue
+          const x = centre.x + dx * 0.2, z = centre.z + dz * 0.2
+          if (Math.hypot(x - centre.x, z - centre.z) < 0.45) continue
+          body.min.set(x - PLAYER_RADIUS, PLAYER_BODY_MIN_Y, z - PLAYER_RADIUS)
+          body.max.set(x + PLAYER_RADIUS, PLAYER_BODY_MAX_Y, z + PLAYER_RADIUS)
+          if (world.blockers.some((b) => body.intersectsBox(b))) continue
+          if (!fromSpawn[cellNear(x, z)]) continue
+          if (world.roomOf(probe.set(x, 1, z)) !== room) continue
+          spots.push(new THREE.Vector3(x, 1.6, z))
+        }
+      }
+    }
+    spots.sort((a, b) => a.distanceToSquared(centre) - b.distanceToSquared(centre))
+    const found = spots.find((spot) => {
+      camera.position.copy(spot)
+      camera.lookAt(centre)
+      camera.updateMatrixWorld(true)
+      interaction.clear()
+      return interaction.update(camera)?.meta.id === id
+    })
+    interaction.clear()
+    focusLines.push(`    ${name.padEnd(20)} ${id.padEnd(10)} ` +
+      (found ? `${found.distanceTo(centre).toFixed(2)} m from (${found.x.toFixed(2)}, ${found.z.toFixed(2)}) in ${world.roomOf(found)}` : 'NOT FOCUSABLE'))
+    ok(!!found && found.distanceTo(centre) <= 2.5,
+      `§11.5 ${name}: canFocus — a player can walk from spawn to a spot in ${room} that focuses ${id}`)
+  }
+
+  // ---- §11.4: single-storey at 2.7 m, inside the existing garden fence ----
+  ok(template.rooms.every((r) => r.min[1] === 0 && r.max[1] === CEILING_HEIGHT),
+    `§11.4 ${name}: every room is on the ground floor, 2.7 m high`)
+  ok(JSON.stringify(template.garden.fence) === JSON.stringify(TEMPLATES.hallway.garden.fence),
+    `§11.4 ${name}: the garden fence is the existing one`)
+  // Inside the fence's inner faces. Its own boards are the only blockers allowed on it.
+  const fence = TEMPLATES.hallway.garden.fence
+  const side = (id: string): (typeof fence)[number] => fence.find((f) => f.id === id)!
+  const inside = new THREE.Box3(
+    new THREE.Vector3(side('fence-w').max[0], -1, side('fence-n').max[2]),
+    new THREE.Vector3(side('fence-e').min[0], 10, side('fence-s-w').min[2])
+  )
+  const fenceBoxes = new Set(fence.map((f) => `${f.min}|${f.max}`))
+  const outside = world.blockers.filter((b) =>
+    !fenceBoxes.has(`${b.min.toArray()}|${b.max.toArray()}`) && !inside.containsBox(b))
+  ok(outside.length === 0 && inside.containsPoint(world.spawn.position),
+    `§11.4 ${name}: the house, its garden and spawn fit inside the fence`,
+    outside.slice(0, 3).map((b) => `${b.min.toArray()} → ${b.max.toArray()}`).join('; '))
+
   // ---- §11.3: nothing reflects ----
   world.root.updateMatrixWorld(true)
   let reflected = 0
@@ -243,6 +315,8 @@ for (const { template, mirror, name } of configs) {
 
 console.log('\n  audits (open doors):')
 for (const line of auditLines) console.log(line)
+console.log('\n  canFocus (real Interaction.update, spot walkable from spawn):')
+for (const line of focusLines) console.log(line)
 
 // ---------------------------------------------------------------------------
 // §11.3 — the mirror is an exact reflection, and photographs are not mirrored
