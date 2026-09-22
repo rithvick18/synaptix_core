@@ -399,7 +399,7 @@ export class UI {
 
   showLoading(message: string): void {
     this.overlayCard.classList.remove('wide', 'summary', 'levels')
-    this.overlayCard.innerHTML = `<h1>Smriti</h1><p>${message}</p><div id="bar"><i></i></div>`
+    this.overlayCard.innerHTML = `<h1>Memoria</h1><p>${message}</p><div id="bar"><i></i></div>`
     this.overlayEl.hidden = false
   }
 
@@ -422,7 +422,7 @@ export class UI {
   showLoadingStages(title: string, stages: LoadStage[]): void {
     this.overlayCard.classList.remove('wide', 'summary', 'levels')
     this.overlayCard.innerHTML =
-      `<h1>Smriti</h1><p>${title}</p>` +
+      `<h1>Memoria</h1><p>${title}</p>` +
       `<div class="stages">${stages
         .map((stage) => {
           const mark = stage.state === 'done' ? '✓' : stage.state === 'active' ? '·' : ' '

@@ -21,11 +21,33 @@ export interface ProbeImage {
   base64: string
 }
 
+/**
+ * One step of the reasoning a request asks for before any tool call (§10.2). The prompts
+ * in `prompts.ts` own both halves of this: `instruction` is rendered into the system
+ * prompt, and `key` names the field the model writes that step's answer into.
+ *
+ * The distinction between the two adapters matters here. Offline, the scratchpad is part
+ * of the constrained-decoding schema and is emitted *before* `calls`, so the sampler
+ * makes the model reason first — thinking is enforced, not requested. Online, Gemini's
+ * function calling owns the response shape, so the same steps are prose in the system
+ * instruction and the model is merely asked. Same prompt, two strengths of guarantee.
+ */
+export interface ReasoningStep {
+  /** JSON property name for this step's note. Short and lower-case — it is decoded. */
+  key: string
+  /** What the model must work out at this step. Rendered into the system prompt. */
+  instruction: string
+}
+
 export interface ProviderRequest {
   systemPrompt: string
   tools: JsonSchemaToolList
   caregiverText: string
   probeImages: ProbeImage[]
+  /** Omitted or empty means "no scratchpad": the request shape is exactly what it was
+   *  before reasoning steps existed, which is what keeps a caller that wants a single
+   *  cheap call from paying for one. */
+  reasoningSteps?: readonly ReasoningStep[]
 }
 
 export interface ProviderToolCall {
@@ -59,6 +81,16 @@ export interface ProviderSuccess {
   ok: true
   toolCalls: ProviderToolCall[]
   model: string
+  /**
+   * What the model wrote for each `ReasoningStep`, keyed by `key`. Present only when the
+   * adapter can actually read the reasoning back — offline, where it is a decoded field.
+   *
+   * It is working notes, not content: it is never committed to a pack, and deliberately
+   * never written to the audit log, which §10.6 limits to the fact that a call happened.
+   * Reasoning quotes the caregiver's own words back, so logging it would turn an
+   * append-only record of calls into a copy of what was in them.
+   */
+  reasoning?: Record<string, string>
 }
 
 export interface ProviderFailure {

@@ -300,7 +300,8 @@ export const AGENT_TOOL_SCHEMA: JsonSchemaTool[] = [
   },
   {
     name: 'propose_photo_placement',
-    description: 'Proposes placing an uploaded image onto an anchor. Applies nothing.',
+    description:
+      "Proposes placing an uploaded image on an anchor. The anchor must accept the image's shape: an upright photograph on a portrait anchor, a wide one on a wall anchor. `crop` is a rectangle in fractions of the image. Applies nothing.",
     parameters: {
       type: 'object',
       properties: {
@@ -315,7 +316,8 @@ export const AGENT_TOOL_SCHEMA: JsonSchemaTool[] = [
   },
   {
     name: 'propose_person',
-    description: 'Proposes an entry in people[]. Applies nothing.',
+    description:
+      'Proposes an entry in people[]. The name must be one the caregiver typed — a face in a photograph is never a name. Applies nothing.',
     parameters: {
       type: 'object',
       properties: {
@@ -330,7 +332,8 @@ export const AGENT_TOOL_SCHEMA: JsonSchemaTool[] = [
   },
   {
     name: 'propose_navigate_step',
-    description: 'Proposes a navigate step. Applies nothing.',
+    description:
+      'Proposes a navigate step. `targetRoom` is a room id the world already has, and `hints.highlight` is usually the door or arch leading there rather than the room itself. Applies nothing.',
     parameters: {
       type: 'object',
       properties: {
@@ -344,7 +347,8 @@ export const AGENT_TOOL_SCHEMA: JsonSchemaTool[] = [
   },
   {
     name: 'propose_find_step',
-    description: 'Proposes a find step. Applies nothing.',
+    description:
+      'Proposes a find step. `targetObject` is an interactable id the world already has, and `hints.highlight` is normally that same id. Applies nothing.',
     parameters: {
       type: 'object',
       properties: {
@@ -358,7 +362,8 @@ export const AGENT_TOOL_SCHEMA: JsonSchemaTool[] = [
   },
   {
     name: 'propose_recall_step',
-    description: 'Proposes a recall step. Applies nothing.',
+    description:
+      'Proposes a recall step. `answer` must appear word for word in `choices`; `reducedChoices` must be a shorter subset of `choices` that still contains `answer`; `hints.highlight` must be the word `reduce`. Applies nothing.',
     parameters: {
       type: 'object',
       properties: {
@@ -375,7 +380,7 @@ export const AGENT_TOOL_SCHEMA: JsonSchemaTool[] = [
   },
   {
     name: 'propose_level',
-    description: 'Assembles proposed steps into a level. Applies nothing.',
+    description: 'Assembles proposed steps into a level, in play order, by their proposal ids. Applies nothing.',
     parameters: {
       type: 'object',
       properties: {
@@ -389,7 +394,7 @@ export const AGENT_TOOL_SCHEMA: JsonSchemaTool[] = [
   {
     name: 'request_caregiver_input',
     description:
-      'The escape hatch: use whenever a fact is needed that has not been supplied. Never guess.',
+      'The escape hatch: ask for any fact you were not given rather than guessing it. Calling this is a success, not a failure — a run that asks nothing about a thin upload has invented something instead.',
     parameters: {
       type: 'object',
       properties: {

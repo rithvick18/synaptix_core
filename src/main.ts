@@ -249,7 +249,7 @@ async function boot(): Promise<void> {
   for (const problem of warnings) {
     console.warn(`[smriti] pack warning · ${problem.where} · ${problem.message}`)
   }
-  document.title = `Smriti — ${pack.patient.name}`
+  document.title = `Memoria — ${pack.patient.name}`
 
   // §4.4: every `t` rides State.elapsed(), the clock that stops in `paused`. Because
   // every stamp is already on that clock, every duration derived from them is already
@@ -437,7 +437,7 @@ async function boot(): Promise<void> {
       onSetup: () => openSetup(() => player.clearInput()),
       setupLabel: describeSetup(agentConfig),
       storageWarning,
-      title: `Smriti — ${pack.patient.name}`,
+      title: `Memoria — ${pack.patient.name}`,
       subtitle:
         `Three levels from the memory pack "${loaded.patientId}". ` +
         'Walk with W A S D, look with the mouse, press E to open doors and to look at things.',

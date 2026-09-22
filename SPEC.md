@@ -1,4 +1,4 @@
-# Smriti 3D — Specification
+# Memoria 3D — Specification
 
 The source of truth for this project. Every implementation request says "follow SPEC.md".
 Update this file whenever a decision changes.
@@ -163,7 +163,7 @@ Record in `ASSETS.md`: source URL, local filename, license, attribution text.
 
 ## 2. Project
 
-**Smriti** — a first-person cognitive-care prototype for dementia support (SIH26003).
+**Memoria** — a first-person cognitive-care prototype for dementia support (SIH26003).
 A patient walks through a familiar home and completes caregiver-defined memory tasks.
 
 **Hard product rule:** the system never invents an autobiographical memory. Every question,
@@ -804,6 +804,29 @@ reason a small local model is viable here at all.
 It guarantees shape, not truth. A grammatically perfect proposal can still assert a fact
 nobody supplied, which is what §10.3's firewall is for.
 
+### Reasoning before calls — enforced by the same schema
+
+A grammar that permits only `{ "calls": [...] }` also forbids thinking: the first token the
+model may emit already commits it to a tool call. That is the worst possible shape for both
+jobs here, which fail by answering too early — naming the person in the photograph before
+asking whether anyone supplied a name, choosing a hex before noticing the room is lit by a
+tungsten bulb.
+
+So a request carries a list of **reasoning steps**, and the envelope gains one required
+string property per step, declared **ahead of `calls`**. Object properties are emitted in
+schema order under a grammar, so the scratchpad is not a request to think first — it is the
+only path through the grammar to a tool call. The authoring pass asks for five (what the
+caregiver supplied, what is visibly in each image, what is missing, the plan with its ids,
+a self-check against the rejection rules); the environment pass asks for four (surfaces,
+lighting, estimates, self-check).
+
+The prose in the system prompt and the fields in the schema are rendered from one array in
+`prompts.ts`, so they cannot drift. Online mode can only ask: Gemini's function calling owns
+the response shape, so the same steps go into the system instruction as the order to think
+in, and no reasoning is read back. The notes are working notes — shown to the caregiver,
+never committed to a pack, and deliberately never written to the audit log, which §10.6
+limits to the fact that a call happened rather than what was in it.
+
 ---
 
 ## 10.3 The content firewall
@@ -942,7 +965,7 @@ how the content was authored:
 "provenance": {
   "agentAssisted": true,
   "model": "<model id>",
-  "promptVersion": "f-1",
+  "promptVersion": "f-2",
   "proposals": { "accepted": 7, "edited": 4, "rejected": 2, "firewallRejected": 3 },
   "caregiverInputRequests": 5,
   "confirmedBy": "caregiver",
@@ -962,7 +985,7 @@ agent: {
   enabled: false,          // default OFF — every existing check passes untouched
   provider: 'none',        // 'none' | 'stub' | 'llama-cpp'
   model: '',
-  promptVersion: 'f-1',
+  promptVersion: 'f-2',      // the prompt revision that authored the content (§10.2)
   consentGiven: false,
   maxProposalsPerRun: 12,
   redactBeforeSend: true

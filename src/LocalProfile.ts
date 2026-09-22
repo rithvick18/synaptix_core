@@ -108,7 +108,7 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => request.result.createObjectStore('profiles')
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
-    request.onblocked = () => reject(new Error('Storage is blocked by another tab. Close other Smriti tabs and retry.'))
+    request.onblocked = () => reject(new Error('Storage is blocked by another tab. Close other Memoria tabs and retry.'))
   })
 }
 async function transaction<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore, result: (v: T) => void) => void): Promise<T> {

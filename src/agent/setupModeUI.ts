@@ -111,11 +111,11 @@ export function openSetupScreen(options: SetupScreenOptions): HTMLElement {
   root.append(sheet)
 
   const heading = document.createElement('h2')
-  heading.textContent = 'Set up Smriti'
+  heading.textContent = 'Set up Memoria'
   const lede = document.createElement('p')
   lede.className = 'lede'
   lede.textContent =
-    'Smriti can build the look of the home from photographs of your own rooms. Choose where the model that reads them runs. Playing a level never uses it — this is only for building the home, and you can change the answer later from the level screen.'
+    'Memoria can build the look of the home from photographs of your own rooms. Choose where the model that reads them runs. Playing a level never uses it — this is only for building the home, and you can change the answer later from the level screen.'
   sheet.append(heading, lede)
 
   let mode: SetupMode = options.config.setupMode ?? 'offline'

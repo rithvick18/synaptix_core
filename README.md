@@ -1,4 +1,4 @@
-# Smriti 3D
+# Memoria 3D
 
 First-person cognitive-care prototype (SIH26003). SPEC.md §6 rows A–D are done: scaffold,
 renderer, procedural world, movement and interaction (A); the mission runner, hint ladder,
@@ -269,6 +269,33 @@ offending token, never silently dropped. A prompt-injection attempt — rendered
 uploaded photo trying to add unrelated content — is caught the same structural way: the
 injected text is simply not in the caregiver's own allow-list, so F-a rejects it.
 
+**The prompts, and why they are shaped like a form.** Every prompt the model sees lives in
+`src/agent/prompts.ts` under one version (`f-2`), which is the version a pack's provenance
+block records. Both jobs here — authoring content, and designing the room environment —
+fail the same way: by answering too early. A model names the face in the photograph before
+asking itself whether anyone supplied a name; it picks a hex colour before noticing the
+room is lit by a tungsten bulb. So neither prompt asks for an answer. Each asks for a short
+named note per reasoning step — what the caregiver supplied, what is visible, what is
+missing, the plan and its ids, a self-check against the rejection rules — and only then for
+tool calls.
+
+Offline, that ordering is not a request. `llamaCpp.ts` compiles the same step list into the
+decoding schema as required fields declared *ahead* of `calls`, and JSON properties are
+emitted in schema order under a grammar, so the sampler has no path to a tool call that
+skips the reasoning. Online, Gemini owns the response shape, so the identical steps go into
+the system instruction as the order to think in — an instruction, not a constraint, and the
+code says so rather than claiming otherwise. The prose and the schema are rendered from one
+array, so they cannot drift apart.
+
+The rest of each prompt is mostly *context*, not exhortation. There is no read/propose loop
+— small models fall apart in one — so the read tools are resolved up front and their answers
+inlined: every room, interactable, anchor, upload and highlight target the model may name,
+plus the caregiver's own allow-list, the one the firewall is about to judge the output
+against. Telling a 4B model the twelve ids it may use beats any amount of prose about
+choosing ids carefully. The prompt also states the firewall's rules, which changes nothing
+about what is enforced — §10.3 runs afterwards and wins — but a proposal the firewall
+rejects is one the caregiver has to repair by hand, so it is worth real accuracy.
+
 **Two setup modes, chosen at start.** The first thing the app asks is where the model
 runs. The screen is `src/agent/setupModeUI.ts`; the answer is one field, `setupMode`, and
 nothing else in the app branches on it.
@@ -403,6 +430,16 @@ defaults to `gemini-3.5-flash-lite`.
   hand-authored pack's export is untouched. `npm run check` covers all of it — the
   firewall and token builder explicitly re-checked under `DEFAULT_AGENT_CONFIG`
   (`enabled: false`) to prove they don't change behaviour based on it.
+- **F5 — the prompt layer.** `src/agent/prompts.ts` holds every prompt the LLM layer
+  sends, under one version, along with the reasoning steps both adapters render (offline
+  into the decoding schema, online into the system instruction) and the builder that
+  inlines a run's resolved world context. `src/agent/authoring.ts` is the pack-authoring
+  counterpart to `environment.ts`: one model call, proposal tools only, and typed
+  proposals out — including a schema-driven argument check that turns a malformed hosted
+  tool call into a reported skip rather than a throw inside the firewall.
+  `tools/checks/agent-prompts.check.ts` pins the ordering property the whole design rests
+  on — the reasoning fields are required and declared before `calls`, so they cannot be
+  skipped — and proves a person proposed in a run can be a recall choice in the same run.
 
 The pack-proposal review workflow remains inactive. The room-environment generator reuses the local vision provider and image pipeline directly from Personalise Home.
 

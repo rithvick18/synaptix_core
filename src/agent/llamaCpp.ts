@@ -19,9 +19,19 @@
  *    physically cannot produce a token sequence outside the schema, which is a stronger
  *    guarantee than a hosted function-calling API gives.
  *
+ * 3. **The reasoning happens before the answer, because the schema says so.** A grammar
+ *    that permits only `{ "calls": [...] }` also forbids thinking: the first token the
+ *    model is allowed to emit commits it to a tool call. That is the worst possible shape
+ *    for the two jobs here, both of which fail by answering too early. So a request
+ *    carrying `reasoningSteps` gets those steps as required string properties placed
+ *    *ahead* of `calls` in the schema (`prompts.ts` owns their wording). JSON object
+ *    properties are emitted in schema order under a grammar, so the scratchpad is not a
+ *    request to think first — it is the only path through the grammar to a tool call.
+ *
  * The firewall (§10.3) still runs on everything that comes back. A well-formed proposal
- * is not a true one.
+ * is not a true one, and a well-argued one is not either.
  */
+import { renderScratchpadPlan } from './prompts'
 import type {
   JsonSchemaToolList,
   ProbeImage,
@@ -29,7 +39,8 @@ import type {
   ProviderFailureReason,
   ProviderRequest,
   ProviderResult,
-  ProviderToolCall
+  ProviderToolCall,
+  ReasoningStep
 } from './provider'
 
 export interface LlamaCppConfig {
@@ -50,6 +61,10 @@ const DEFAULT_BASE_URL = 'http://127.0.0.1:8080'
  *  image, and on CPU-only hardware a first call can legitimately take a minute. */
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_MAX_CALLS = 12
+/** Room for a full run of proposals *and* the reasoning that precedes them. A truncated
+ *  reply is a grammar violation rather than a short answer — the JSON simply never
+ *  closes — so this is sized for the worst case, not the typical one. */
+const MAX_TOKENS = 3072
 
 const START_COMMAND =
   'llama-server -m gemma-3-4b-it-Q4_K_M.gguf --mmproj mmproj-gemma-3-4b-it-f16.gguf --port 8080'
@@ -72,10 +87,21 @@ function isLoopback(raw: string): boolean {
  * llama.cpp turns this into a GBNF grammar, so `tool` is always a real tool and `args`
  * always matches that tool's own parameter schema.
  */
-function toolCallSchema(tools: JsonSchemaToolList, maxCalls: number): Record<string, unknown> {
+function toolCallSchema(
+  tools: JsonSchemaToolList,
+  maxCalls: number,
+  reasoningSteps: readonly ReasoningStep[]
+): Record<string, unknown> {
+  // Property order is the whole point: every reasoning field is required and declared
+  // before `calls`, so a valid document cannot reach a tool call without passing through
+  // the reasoning first. With no steps this is byte-for-byte the schema it always was.
+  const scratchpad = Object.fromEntries(
+    reasoningSteps.map((step) => [step.key, { type: 'string', description: step.instruction }])
+  )
   return {
     type: 'object',
     properties: {
+      ...scratchpad,
       calls: {
         type: 'array',
         maxItems: maxCalls,
@@ -89,7 +115,7 @@ function toolCallSchema(tools: JsonSchemaToolList, maxCalls: number): Record<str
         }
       }
     },
-    required: ['calls'],
+    required: [...reasoningSteps.map((step) => step.key), 'calls'],
     additionalProperties: false
   }
 }
@@ -156,7 +182,12 @@ function classifyStatus(status: number, body: string): { reason: ProviderFailure
   return { reason: 'unknown', detail: `HTTP ${status}` }
 }
 
-function parseToolCalls(text: string): ProviderToolCall[] | { error: string } {
+interface ParsedEnvelope {
+  calls: ProviderToolCall[]
+  reasoning?: Record<string, string>
+}
+
+function parseEnvelope(text: string, reasoningSteps: readonly ReasoningStep[]): ParsedEnvelope | { error: string } {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -164,7 +195,8 @@ function parseToolCalls(text: string): ProviderToolCall[] | { error: string } {
     return { error: 'not JSON' }
   }
   if (typeof parsed !== 'object' || parsed === null) return { error: 'not an object' }
-  const calls = (parsed as { calls?: unknown }).calls
+  const envelope = parsed as Record<string, unknown>
+  const calls = envelope.calls
   if (!Array.isArray(calls)) return { error: 'no calls array' }
 
   const out: ProviderToolCall[] = []
@@ -174,7 +206,16 @@ function parseToolCalls(text: string): ProviderToolCall[] | { error: string } {
     if (typeof tool !== 'string') return { error: 'a call had no tool name' }
     out.push({ tool, args: args ?? {} })
   }
-  return out
+
+  // Missing reasoning is not a failure. The grammar makes it impossible on a server that
+  // honours `response_format`, and on one that does not, a run that produced usable
+  // proposals should not be thrown away because its working notes are absent.
+  const reasoning: Record<string, string> = {}
+  for (const step of reasoningSteps) {
+    const note = envelope[step.key]
+    if (typeof note === 'string' && note.trim().length > 0) reasoning[step.key] = note
+  }
+  return Object.keys(reasoning).length > 0 ? { calls: out, reasoning } : { calls: out }
 }
 
 export class LlamaCppProviderAdapter implements ProviderAdapter {
@@ -193,14 +234,21 @@ export class LlamaCppProviderAdapter implements ProviderAdapter {
     const doFetch = this.config.fetch ?? fetch
     const timeoutMs = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS
     const maxCalls = this.config.maxCalls ?? DEFAULT_MAX_CALLS
+    const reasoningSteps = request.reasoningSteps ?? []
+    // The prose and the schema are rendered from the same array, so the fields the model
+    // is told to fill in are exactly the fields the grammar will demand.
+    const plan = renderScratchpadPlan(reasoningSteps)
 
     const body = {
       model: this.config.model ?? 'local',
       temperature: 0,
-      max_tokens: 2048,
+      max_tokens: MAX_TOKENS,
       cache_prompt: true,
       messages: [
-        { role: 'system', content: `${request.systemPrompt}\n\nTools available:\n${toolDirectory(request.tools)}` },
+        {
+          role: 'system',
+          content: `${request.systemPrompt}\n\nTools available:\n${toolDirectory(request.tools)}${plan ? `\n\n${plan}` : ''}`
+        },
         {
           role: 'user',
           content: [...request.probeImages.map(imageBlock), { type: 'text', text: request.caregiverText }]
@@ -208,7 +256,11 @@ export class LlamaCppProviderAdapter implements ProviderAdapter {
       ],
       response_format: {
         type: 'json_schema',
-        json_schema: { name: 'agent_tool_calls', strict: true, schema: toolCallSchema(request.tools, maxCalls) }
+        json_schema: {
+          name: 'agent_tool_calls',
+          strict: true,
+          schema: toolCallSchema(request.tools, maxCalls, reasoningSteps)
+        }
       }
     }
 
@@ -245,12 +297,17 @@ export class LlamaCppProviderAdapter implements ProviderAdapter {
         return { ok: false, reason: 'malformed-response', message: friendlyMessage('malformed-response', 'no message content') }
       }
 
-      const calls = parseToolCalls(content)
-      if (!Array.isArray(calls)) {
-        return { ok: false, reason: 'malformed-response', message: friendlyMessage('malformed-response', calls.error) }
+      const envelope = parseEnvelope(content, reasoningSteps)
+      if ('error' in envelope) {
+        return { ok: false, reason: 'malformed-response', message: friendlyMessage('malformed-response', envelope.error) }
       }
 
-      return { ok: true, toolCalls: calls, model: typeof payload.model === 'string' ? payload.model : (this.config.model ?? 'local') }
+      return {
+        ok: true,
+        toolCalls: envelope.calls,
+        model: typeof payload.model === 'string' ? payload.model : (this.config.model ?? 'local'),
+        ...(envelope.reasoning ? { reasoning: envelope.reasoning } : {})
+      }
     }
 
     // Retry is driven by the *result*, not only by thrown errors: llama-server signals

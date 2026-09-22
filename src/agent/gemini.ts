@@ -21,7 +21,17 @@
  * guarantee than offline mode's GBNF grammar — the sampler is not ours — which is why
  * the returned calls are still capped locally and the firewall (§10.3) still runs on
  * everything that comes back. A well-formed proposal is not a true one.
+ *
+ * The same asymmetry applies to a request's `reasoningSteps`. Offline they are fields in
+ * the decoding schema, placed ahead of the tool calls, so the model cannot answer before
+ * it reasons. Here the response shape belongs to Gemini's function calling and `mode:
+ * any` forces a call immediately, so there is nowhere to write a scratchpad: the steps go
+ * into the system instruction as the order to think in, and `ProviderSuccess.reasoning`
+ * comes back undefined because there is nothing to read it out of. Worth sending anyway —
+ * the steps are what stops a model answering "who is this?" from a face — but it is an
+ * instruction, not a constraint, and this file does not pretend otherwise.
  */
+import { renderThinkFirstPlan } from './prompts'
 import type {
   JsonSchemaToolList,
   ProbeImage,
@@ -204,10 +214,11 @@ export class GeminiProviderAdapter implements ProviderAdapter {
     const maxCalls = this.config.maxCalls ?? DEFAULT_MAX_CALLS
     const model = this.config.model || DEFAULT_GEMINI_MODEL
     const toolNames = request.tools.map((t) => t.name)
+    const plan = renderThinkFirstPlan(request.reasoningSteps ?? [])
 
     const body = {
       model,
-      system_instruction: `${request.systemPrompt}\n\nTools available:\n${toolDirectory(request.tools)}`,
+      system_instruction: `${request.systemPrompt}\n\nTools available:\n${toolDirectory(request.tools)}${plan ? `\n\n${plan}` : ''}`,
       input: [...request.probeImages.map(imagePart), { type: 'text', text: request.caregiverText }],
       tools: request.tools.map((tool) => ({
         type: 'function',

@@ -13,6 +13,7 @@
  * `setupMode: null` means "not asked yet", which is what puts the setup screen on
  * screen at start. It is not a third mode: nothing runs until one of the two is chosen.
  */
+import { PROMPT_VERSION } from './prompts'
 
 export type AgentProvider = 'none' | 'stub' | 'llama-cpp' | 'gemini'
 
@@ -52,7 +53,9 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   provider: 'stub',
   model: '',
   apiKey: '',
-  promptVersion: 'f-1',
+  // Read from `prompts.ts` rather than written out here, so the version a pack's
+  // provenance records (§10.8) cannot fall behind the prompts that actually authored it.
+  promptVersion: PROMPT_VERSION,
   consentGiven: false,
   maxProposalsPerRun: 12,
   redactBeforeSend: true
