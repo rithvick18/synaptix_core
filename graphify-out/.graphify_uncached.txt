@@ -1,0 +1,3 @@
+/Users/user/Documents/synaptix_core/DEPLOY.md
+/Users/user/Documents/synaptix_core/README.md
+/Users/user/Documents/synaptix_core/SPEC.md
