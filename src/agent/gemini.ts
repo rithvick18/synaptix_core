@@ -1,5 +1,6 @@
 /**
- * §10.6 online mode — hosted inference. The counterpart to `llamaCpp.ts`: the same
+ * §10.6 online setup mode — hosted inference, recorded as a deviation in §10.11. This is
+ * the counterpart to `llamaCpp.ts`: the same
  * `ProviderAdapter` seam, the same typed failures, the same "never a blocked UI"
  * fallback, but the model is Google's `gemini-3.5-flash-lite` reached over the
  * internet through the Gemini Interactions API.

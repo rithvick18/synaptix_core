@@ -888,11 +888,16 @@ The system prompt states this, but the system prompt is not the control — §10
 2. Reject non-image MIME, > 15 MB, or dimensions beyond sane bounds.
 3. Produce three derivatives locally: `probe` (max 1024 px, shown to the model), `texture`
    (max 1024 px, power-of-two padded, used in-world), `thumb` (256 px, for review UI).
-4. **Nothing leaves the machine at all.** Inference is local (§10.6), so `probe` travels
-   no further than the loopback interface. It stays a distinct, downscaled derivative
-   anyway: a 4B vision model gains nothing from full resolution and costs real time on it,
-   and keeping originals out of the model path means a future change of runtime cannot
-   quietly widen what is exposed.
+4. **`probe` is the only thing any model is ever shown, in either setup mode.** Offline
+   (§10.6) it travels no further than the loopback interface; online it is what crosses the
+   internet — and it is the only thing that does. Originals, EXIF, `texture`, `thumb` and
+   audio have no path to a provider in either mode. It is a distinct, downscaled derivative
+   for its own reasons too: a 4B vision model gains nothing from full resolution and costs
+   real time on it. This clause was originally written on the reasoning that keeping
+   originals out of the model path means *a future change of runtime cannot quietly widen
+   what is exposed*. The runtime did change (§10.11) and the exposure did not widen. That is
+   the clause doing its job, and it is why it stays worded as a property of the pipeline
+   rather than of the provider.
 5. The model proposes `crop` as a normalised rect; the caregiver adjusts it with drag handles.
    The committed crop is whatever the caregiver left in the box, not what the model said.
 6. Colour space and texture flags follow the existing anchor injection path from §4.1 — the
@@ -900,7 +905,12 @@ The system prompt states this, but the system prompt is not the control — §10
 
 ---
 
-## 10.6 Privacy — inference is local
+## 10.6 Privacy — inference is local by default
+
+**There are two setup modes, and the caregiver chooses between them before the first call.
+Offline is the default and is what an unconfigured install does.**
+
+### Offline mode — the default
 
 **The model runs on the caregiver's machine.** Inference is `llama.cpp`'s `llama-server`
 serving a 4-bit quantised ~4B vision model (Gemma 3 4B class, with its `--mmproj` vision
@@ -920,12 +930,56 @@ design already assumes the model is untrusted — every proposal passes the fire
 then a human before it can reach a patient. The agent is an accelerator, not an authority,
 so accuracy buys convenience rather than correctness.
 
-- **One-time disclosure** before the first call: a dialog naming what reads the
-  photographs (a model on this computer), what it is shown (a downscaled, EXIF-stripped
-  copy), and what it is not (originals, audio, telemetry — and nothing to the internet).
-  This is a disclosure that a model reads the photographs at all, not consent to a
-  transfer. Declining still leaves the whole feature off and manual authoring fully
-  available.
+### Online mode
+
+**The model is Google's `gemini-3.5-flash-lite`**, reached over HTTPS at
+`generativelanguage.googleapis.com` with the caregiver's own API key sent as the
+`x-goog-api-key` header. It exists because the trade named just above is real: a 4B local
+model is rougher, and a caregiver with no capable GPU and nothing installed should still be
+able to use the feature. **It is not the default and must not become one.**
+
+Online mode gives up the structural claim entirely, and the honest thing is to say so
+rather than restate the offline wording more carefully. A privacy property becomes a
+privacy policy again the moment the photographs leave the device. What `GeminiProviderAdapter`
+enforces instead is narrower, but it is enforced in code rather than promised in prose:
+
+1. **One destination.** `baseUrl` is refused unless it is HTTPS to
+   `generativelanguage.googleapis.com`. The stored config cannot express a host at all, so
+   this guards only a hand-edited `.env` — but the caregiver's photographs and key have
+   exactly one place they can go, and every other host fails before a socket opens.
+2. **Nothing moves without a key.** A missing key fails as `no-key` before a socket opens,
+   rather than sending the images and finding out.
+3. **Consent never crosses a mode change.** Agreeing that a model on your own computer may
+   look at the photographs is not agreeing that Google may, so any change of `setupMode`
+   resets `consentGiven` and the new mode's disclosure is shown and answered again.
+4. **Offline holds no key.** Switching back to offline clears the stored `apiKey`, so a
+   machine returned to local inference is not still carrying a credential.
+
+**Where the key lives, stated plainly.** The caregiver types it into the setup screen and it
+is persisted with the rest of the agent config in `localStorage`. A key in the browser is a
+key anything running on that origin can read, and no amount of care elsewhere changes that.
+It is accepted here because §10's agent layer is a local-development and
+single-caregiver-machine feature, not a multi-tenant deployment. Two consequences follow and
+are not negotiable:
+
+- **Never run `npm run build` with `VITE_GEMINI_API_KEY` set for anything that will be
+  hosted publicly.** Vite bakes every `VITE_` variable into the bundle. For any machine but
+  your own, leave it blank and let the caregiver type the key into the setup screen, where
+  it stays in that browser rather than in the build.
+- **If this feature is ever deployed for caregivers at large, the key moves server-side and
+  this subsection is rewritten.** Routing online mode through a minimal serverless proxy
+  that holds the key was considered and declined for the current scope; the decision and its
+  reasoning are recorded in §10.11 so that revisiting it does not start from nothing.
+
+- **One-time disclosure** before the first call, worded per mode by `consentPromptFor(mode)`.
+  Both modes name what the model is shown (a downscaled, EXIF-stripped copy) and what it is
+  not (originals, audio, telemetry). Offline's names what reads the photographs — a model on
+  this computer — and says nothing reaches the internet: it is a disclosure that a model
+  reads them at all, not consent to a transfer. Online's must say plainly that those
+  downscaled copies cross the internet to Google, because it *is* consent to a transfer.
+  **Neither wording may be reused for the other mode**, and this is exactly what the
+  consent reset in the list above protects. Declining still leaves the whole feature off and
+  manual authoring fully available.
 - **Audio is never sent.** Voice clips are attached by the caregiver by hand.
 - **Demo packs stay fictional.** Mira and Raju keep their `demo` block. Never demonstrate this
   with a real person's photo.
@@ -983,28 +1037,42 @@ in the review UI; they are the honest measure of how much the agent actually con
 ```ts
 agent: {
   enabled: false,          // default OFF — every existing check passes untouched
-  provider: 'none',        // 'none' | 'stub' | 'llama-cpp'
+  setupMode: null,         // 'offline' | 'online' | null — null until the setup screen is
+                           //   answered, which is what `needsSetup()` tests
+  provider: 'stub',        // 'none' | 'stub' | 'llama-cpp' | 'gemini'
+                           //   the stub is the default everywhere, tests included:
+                           //   a real provider is opt-in, never accidental
   model: '',
+  apiKey: '',              // online mode only; cleared on a switch back to offline (§10.6)
   promptVersion: 'f-2',      // the prompt revision that authored the content (§10.2)
-  consentGiven: false,
+  consentGiven: false,     // reset by any change of setupMode (§10.6)
   maxProposalsPerRun: 12,
   redactBeforeSend: true
 }
 ```
 
-`baseUrl` is deliberately **not** in this block. It is read from `.env` only, never
-persisted to `localStorage`, so a corrupted or tampered stored config has no way to
-express an off-machine endpoint at all.
+`baseUrl` is deliberately **not** in this block, in either mode. It is read from `.env`
+only, never persisted to `localStorage`, so a corrupted or tampered stored config has no
+way to express an endpoint at all — and each adapter then constrains what `.env` is even
+allowed to say: loopback offline, `generativelanguage.googleapis.com` online. This property
+survived the addition of online mode intact and is worth keeping that way.
+
+`apiKey` **is** persisted, and is the one piece of stored config that is sensitive. §10.6
+states plainly why that is accepted at this scope and what it forbids — chiefly building for
+a public host with `VITE_GEMINI_API_KEY` set. Offline mode clears it, so the credential
+exists only while the mode that uses it is selected.
 
 - With `enabled: false` the entire feature is inert and the app behaves exactly as at
   Checkpoint E. This is the shipped default.
-- Failure modes are the local ones — `server-unreachable` (llama-server is not running),
-  `model-not-loaded` (running, but started without `--mmproj`, so it cannot see),
-  `overloaded` (still loading weights, or every slot busy), `timeout`, and
-  `malformed-response`. There is no `no-key` or `bad-key`: nothing authenticates, because
-  nothing leaves the machine. Each maps to a clear caregiver-facing message — the
-  unreachable case prints the `llama-server` command to run — and a fall back to manual
-  authoring. Never a blocked UI.
+- Failure modes divide by mode. The local ones are `server-unreachable` (llama-server is
+  not running), `model-not-loaded` (running, but started without `--mmproj`, so it cannot
+  see), `overloaded` (still loading weights, or every slot busy), `timeout` and
+  `malformed-response`. The hosted ones are what only a remote API can do to you: `no-key`,
+  `bad-key`, `rate-limited` and `blocked`. **Offline mode can never produce the second
+  group, and that unreachability is the point** — nothing authenticates because nothing
+  leaves the machine. Each maps to a clear caregiver-facing message — the unreachable case
+  prints the `llama-server` command to run, the key cases name which key was rejected and
+  where it was entered — and a fall back to manual authoring. Never a blocked UI.
 - Only `timeout` and `overloaded` are retried, exactly once. A server that is not running
   will not start because it was asked twice.
 - `npm run check:offline` is unaffected, because no patient path touches the agent.
@@ -1024,3 +1092,86 @@ express an off-machine endpoint at all.
 
 F1 ships before any provider is wired. The safety property is testable without spending a single
 token, and building it first means the expensive path is never the thing you are debugging.
+
+---
+
+## 10.11 Recorded deviations
+
+§8 requires every request to end with any deviation from SPEC.md and the reason for it.
+This section is where the ones that shipped are written down, so that a reader of §10 is
+never told something the code contradicts, and so that a decision already argued once does
+not have to be argued again from nothing.
+
+### D-1 — Online setup mode (hosted inference)
+
+**Shipped** in `215989d` (2026-09-22). **Recorded** 2026-09-22, after the fact.
+
+*Specified:* §10.6 placed inference on the caregiver's machine — "No hosted provider, no
+API key, no account" — and §10.9 gave `provider` the union `'none' | 'stub' | 'llama-cpp'`
+with no `no-key` or `bad-key` failure mode, because nothing authenticated. `41d36af` had
+deliberately removed a hosted adapter (Anthropic, with `@anthropic-ai/sdk`) one commit
+earlier, on the reasoning that in a local-only design a hosted adapter is a live path for
+patient photographs to leave the device.
+
+*Shipped:* a second setup mode reintroducing hosted inference — Google's
+`gemini-3.5-flash-lite`, a caregiver-supplied API key persisted in `localStorage`, and
+`no-key` / `bad-key` / `rate-limited` / `blocked` back in the failure union.
+
+*Why it was not reported at the time:* the commit bundled two unrelated changes, online
+mode and the adaptive resolution ladder. SPEC.md **was** edited in that commit — §7 and §9,
+for the renderer work — so the obligation registered as discharged while §10 was never
+opened. The commit message described online mode across five paragraphs and even stated the
+privacy asymmetry outright ("Offline mode's privacy claim is structural and online mode's
+cannot be"). **Describing a trade-off is not declaring a deviation.** A thorough commit
+message is not a substitute for amending the document that makes the claim, and README.md
+and `.env.example` being updated while SPEC.md was not is precisely the failure, not a
+mitigation of it.
+
+*Compounding:* `79c1da5` later amended a single sentence in §10.2 to account for online
+mode's response shape, leaving §10.5, §10.6 and §10.9 still asserting local-only inference.
+The specification disagreed with itself for two commits.
+
+*Decision, 2026-09-22:* **both modes are wanted and online mode stays.** Removing it to
+restore the local-only design was considered and rejected: the offline trade in §10.6 is
+real, and a caregiver with no capable GPU should still be able to use the feature. §10.5,
+§10.6 and §10.9 are amended to describe both modes honestly rather than deleting the mode
+so that a stale document becomes true again.
+
+*Not changed by this decision:* the key remains client-side. See D-2.
+
+### D-2 — Serverless proxy for the online key: considered, declined
+
+Routing online mode through a minimal serverless function holding the API key server-side
+was put forward on 2026-09-22 and declined for the current scope. Recorded here because a
+decision that exists only in conversation constrains later work without anyone being able
+to see it — which is the same failure as D-1 in a different form.
+
+*In favour:* `apiKey` leaves the client entirely, restoring §10.9's property that nothing
+sensitive is persisted in browser storage, and removing the standing hazard of a public
+build carrying `VITE_GEMINI_API_KEY`.
+
+*Against:* it adds a deployable component and a deployment story to a feature that is
+otherwise local-development-only; and it introduces a trust boundary §10.1 does not model,
+because the proxy sees every `probe` image that passes through it. Trading a key the
+caregiver controls for a server the caregiver does not is not obviously a privacy gain at
+single-machine scope.
+
+*Revisit when:* this feature is deployed for caregivers at large, or anything hosted is
+built from this repository with online mode enabled. At that point the proxy is not
+optional, and §10.6's key subsection is rewritten rather than amended.
+
+### D-3 — `provider` default (minor)
+
+§10.9's block showed `provider: 'none'`; the code has always defaulted to `'stub'`, so that
+the stub model is what tests and unconfigured installs get and a real provider is opt-in.
+Corrected in favour of the code, which is the behaviour every check already pins.
+
+### What must stay verified
+
+The Checkpoint F acceptance table in §10.10 is a historical record and is deliberately not
+rewritten. Its F2 row — the adapter refusing a non-loopback endpoint, with originals and
+EXIF never leaving the machine, both verified without a network — still describes the
+offline adapter and remains live. Online mode adds its own standing obligations, each with a
+check: every host other than `generativelanguage.googleapis.com` refused before a socket
+opens; a missing key failing as `no-key` before a socket opens; `consentGiven` reset by any
+change of `setupMode`; and `apiKey` cleared when the mode returns to offline.

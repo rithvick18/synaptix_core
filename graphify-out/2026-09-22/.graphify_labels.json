@@ -1,6 +1,6 @@
 {
   "0": "MemoryPack.ts",
-  "1": "FakeUI",
+  "1": "pack.check.ts",
   "2": "layout.ts",
   "3": "MissionRunner",
   "4": "Three levels",
@@ -9,7 +9,7 @@
   "7": "boot",
   "8": "package.json",
   "9": "createProceduralHouse",
-  "10": "main.ts",
+  "10": "Telemetry.ts",
   "11": "offline-check.mjs",
   "12": "Player",
   "13": "Telemetry",
@@ -48,7 +48,7 @@
   "46": "proposals.fixtures.ts",
   "47": "agent.check.ts",
   "48": "agent-provider.check.ts",
-  "49": "pack.check.ts",
+  "49": "Quality.ts",
   "50": "gemini.ts",
   "51": "loadMedia",
   "52": "ui.ts",
@@ -56,5 +56,10 @@
   "54": "selectProvider.ts",
   "55": "EnvironmentEditor.ts",
   "56": "Q: How do uploaded images modify the game environment?",
-  "57": "injectAnchors"
+  "57": "injectAnchors",
+  "58": "environment.ts",
+  "59": "three",
+  "60": "main.ts",
+  "61": "loadSet",
+  "62": "transaction"
 }

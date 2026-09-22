@@ -1,13 +1,13 @@
-# Graph Report - 3D game  (2026-09-21)
+# Graph Report - 3D game  (2026-09-22)
 
 ## Corpus Check
-- 61 files · ~95,276 words
+- 63 files · ~102,209 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 2 file(s) not represented in the graph (top: .example 1, (none) 1)
 
 ## Summary
-- 898 nodes · 1827 edges · 58 communities (41 shown, 17 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 71 edges (avg confidence: 0.81)
+- 936 nodes · 1914 edges · 63 communities (44 shown, 19 thin omitted)
+- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 77 edges (avg confidence: 0.81)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
@@ -17,7 +17,7 @@
 
 ## Community Hubs (Navigation)
 - MemoryPack.ts
-- FakeUI
+- pack.check.ts
 - layout.ts
 - MissionRunner
 - Three levels
@@ -26,7 +26,7 @@
 - boot
 - package.json
 - createProceduralHouse
-- main.ts
+- Telemetry.ts
 - offline-check.mjs
 - Player
 - Telemetry
@@ -65,7 +65,7 @@
 - proposals.fixtures.ts
 - agent.check.ts
 - agent-provider.check.ts
-- pack.check.ts
+- Quality.ts
 - gemini.ts
 - loadMedia
 - ui.ts
@@ -74,13 +74,18 @@
 - EnvironmentEditor.ts
 - Q: How do uploaded images modify the game environment?
 - injectAnchors
+- environment.ts
+- three
+- main.ts
+- loadSet
+- transaction
 
 ## God Nodes (most connected - your core abstractions)
-1. `boot()` - 80 edges
+1. `boot()` - 88 edges
 2. `MissionRunner` - 33 edges
 3. `UI` - 28 edges
-4. `Telemetry` - 25 edges
-5. `createProceduralHouse()` - 25 edges
+4. `createProceduralHouse()` - 27 edges
+5. `Telemetry` - 25 edges
 6. `Player` - 23 edges
 7. `State` - 19 edges
 8. `ReviewSession` - 18 edges
@@ -88,16 +93,16 @@
 10. `three` - 15 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `mediaFor()` --calls--> `loadMedia()`  [EXTRACTED]
+  tools/checks/pack.check.ts → src/MemoryPack.ts
 - `run()` --calls--> `environmentEditor()`  [EXTRACTED]
   tools/profile-browser.check.ts → src/EnvironmentEditor.ts
+- `run()` --calls--> `styleMaterial()`  [EXTRACTED]
+  tools/profile-browser.check.ts → src/EnvironmentMaterials.ts
 - `mutate()` --calls--> `validate()`  [EXTRACTED]
-  tools/checks/pack.check.ts → src/MemoryPack.ts
-- `mediaFor()` --calls--> `loadMedia()`  [EXTRACTED]
   tools/checks/pack.check.ts → src/MemoryPack.ts
 - `Rig` --references--> `MissionRunner`  [EXTRACTED]
   tools/checks/pack.check.ts → src/Missions.ts
-- `endToEnd()` --calls--> `MissionRunner`  [EXTRACTED]
-  tools/checks/telemetry.check.ts → src/Missions.ts
 
 ## Import Cycles
 - None detected.
@@ -105,19 +110,19 @@
 ## Hyperedges (group relationships)
 - **Three levels in one caregiver pack** — spec_memory_pack, spec_water, spec_morning_walk, spec_familiar_memories [EXTRACTED 1.00]
 
-## Communities (58 total, 17 thin omitted)
+## Communities (63 total, 19 thin omitted)
 
 ### Community 0 - "MemoryPack.ts"
 Cohesion: 0.10
-Nodes (24): applyNonLevelProposal(), AssetUrlResolver, buildPackFromProposals(), breakagesFromLocation(), CardStyle, Json, LoadedPack, patientIdFromLocation() (+16 more)
+Nodes (25): applyNonLevelProposal(), AssetUrlResolver, buildPackFromProposals(), breakagesFromLocation(), CardStyle, Json, LoadedPack, patientIdFromLocation() (+17 more)
 
-### Community 1 - "FakeUI"
-Cohesion: 0.10
-Nodes (5): FakePlayer, FakeState, FakeUI, FakeVoices, Rig
+### Community 1 - "pack.check.ts"
+Cohesion: 0.06
+Nodes (19): PackProblem, failures, fakeCtx, FakeImage, fakeLoad(), FakePlayer, FakeState, FakeUI (+11 more)
 
 ### Community 2 - "layout.ts"
 Cohesion: 0.06
-Nodes (35): ARCH_HEIGHT, BEDSIDE_FRAME_ANCHOR, BEDSIDE_FRAME_YAW, ChairSpec, DOOR_HEIGHT, DOORS, EAST_DIV, EXT_WALL_T (+27 more)
+Nodes (33): ARCH_HEIGHT, ARCHES, AUDIO_SOURCE_ANCHOR, BEDSIDE_FRAME_ANCHOR, CHAIRS, DOOR_HEIGHT, EAST_DIV, EXT_WALL_T (+25 more)
 
 ### Community 3 - "MissionRunner"
 Cohesion: 0.10
@@ -132,8 +137,8 @@ Cohesion: 0.13
 Nodes (12): Focus, Interaction, SwappedMaterial, assertWorldContract(), InteractableMeta, readMeta(), REQUIRED_ANCHORS, REQUIRED_HINT_TARGETS (+4 more)
 
 ### Community 6 - "proceduralHouse.ts"
-Cohesion: 0.08
-Nodes (25): ARCHES, AUDIO_SOURCE_ANCHOR, CEILING_HEIGHT, CHAIRS, LAMPS, OPENINGS, ROOMS, SolidSpec (+17 more)
+Cohesion: 0.09
+Nodes (25): BEDSIDE_FRAME_YAW, CEILING_HEIGHT, ChairSpec, DOORS, LIVING_ROOM_WALL_ANCHOR, LIVING_ROOM_WALL_YAW, OpeningSpec, ROOMS (+17 more)
 
 ### Community 7 - "boot"
 Cohesion: 0.15
@@ -147,9 +152,9 @@ Nodes (22): dependencies, three, devDependencies, @types/node, @types/three, typ
 Cohesion: 0.16
 Nodes (20): Surface, auditDoorways(), auditReachability(), boxMesh(), buildChair(), buildFrameAnchor(), buildLamp(), buildPlant() (+12 more)
 
-### Community 10 - "main.ts"
-Cohesion: 0.13
-Nodes (19): describe(), FocusProbe, percentile(), PerfResult, downloadJson(), DWELL_THRESHOLD_MS, DwellTotal, Event (+11 more)
+### Community 10 - "Telemetry.ts"
+Cohesion: 0.18
+Nodes (14): buildExport(), DWELL_THRESHOLD_MS, dwellByObject(), DwellTotal, EventListener, ExportContext, ExportDocument, mean() (+6 more)
 
 ### Community 11 - "offline-check.mjs"
 Cohesion: 0.10
@@ -168,8 +173,8 @@ Cohesion: 0.16
 Nodes (4): Recorder, endToEnd(), FakeState, makeWorld()
 
 ### Community 18 - "telemetry.check.ts"
-Cohesion: 0.18
-Nodes (9): buildExport(), dwellByObject(), missionIdsIn(), cleanRun, failures, fakePlayer, fakeVoices, miraPack (+1 more)
+Cohesion: 0.20
+Nodes (6): cleanRun, failures, fakePlayer, fakeVoices, miraPack, textMedia
 
 ### Community 19 - "agent-gemini.check.ts"
 Cohesion: 0.09
@@ -188,8 +193,8 @@ Cohesion: 0.33
 Nodes (5): GameState, MOVEMENT_ENABLED, POINTER_LOCK_WANTED, StateListener, TIMERS_RUN
 
 ### Community 37 - "llamaCpp.ts"
-Cohesion: 0.14
-Nodes (19): classifyStatus(), classifyThrown(), friendlyMessage(), imageBlock(), isLoopback(), isRetryable(), LlamaCppProviderAdapter, parseToolCalls() (+11 more)
+Cohesion: 0.17
+Nodes (16): classifyStatus(), classifyThrown(), friendlyMessage(), imageBlock(), isLoopback(), isRetryable(), LlamaCppProviderAdapter, parseToolCalls() (+8 more)
 
 ### Community 38 - "tools.ts"
 Cohesion: 0.10
@@ -200,8 +205,8 @@ Cohesion: 0.21
 Nodes (5): ReviewSession, ProposalReviewList, renderProvenanceSummary(), CaregiverInputRequest, ToolResult
 
 ### Community 40 - "LocalProfile.ts"
-Cohesion: 0.12
-Nodes (31): three, colors, describeEnvironment(), EnvironmentStyle, validateEnvironment(), styleMaterial(), Crop, LocalPerson (+23 more)
+Cohesion: 0.26
+Nodes (17): EnvironmentStyle, LocalPerson, LocalProfile, newId(), newProfile(), Photo, photosOf(), profileErrors() (+9 more)
 
 ### Community 41 - "agent-images.check.ts"
 Cohesion: 0.10
@@ -235,29 +240,29 @@ Nodes (6): DEFAULT_AGENT_CONFIG, PROPOSAL_FIXTURES, StubModel, AGENT_TOOL_SCHEMA
 Cohesion: 0.13
 Nodes (8): AuditEntry, AuditLog, AuditSink, consoleAuditSink, CONSENT_PROMPT, failures, REQUEST, WITH_IMAGE
 
-### Community 49 - "pack.check.ts"
-Cohesion: 0.14
-Nodes (13): PackProblem, failures, fakeCtx, FakeImage, fakeLoad(), LoadFn, makeWorld(), MISSING (+5 more)
+### Community 49 - "Quality.ts"
+Cohesion: 0.11
+Nodes (16): AdaptiveOptions, AdaptiveResolution, AdaptiveStep, clampRatio(), detectQuality(), detectTier(), DeviceInfo, isSmall() (+8 more)
 
 ### Community 50 - "gemini.ts"
-Cohesion: 0.21
-Nodes (13): ALLOWED_HOSTS, classifyStatus(), classifyThrown(), friendlyMessage(), GeminiProviderAdapter, imagePart(), InteractionStep, isGoogleEndpoint() (+5 more)
+Cohesion: 0.20
+Nodes (14): ALLOWED_HOSTS, classifyStatus(), classifyThrown(), friendlyMessage(), GeminiProviderAdapter, imagePart(), InteractionStep, isGoogleEndpoint() (+6 more)
 
 ### Community 51 - "loadMedia"
-Cohesion: 0.23
-Nodes (7): loadAudio(), loadImage(), loadMedia(), loadTexture(), PackMedia, placeholderTexture(), mediaFor()
+Cohesion: 0.18
+Nodes (8): Crop, loadAudio(), loadImage(), loadMedia(), loadTexture(), PackMedia, placeholderTexture(), MediaResolver
 
 ### Community 52 - "ui.ts"
-Cohesion: 0.17
-Nodes (10): LoadOptions, MediaOptions, EnvironmentReport, AnswerCardOptions, LevelChoice, LevelSelectView, LoadStage, RenderedProblem (+2 more)
+Cohesion: 0.18
+Nodes (9): LoadOptions, MediaOptions, AnswerCardOptions, LevelChoice, LevelSelectView, LoadStage, RenderedProblem, StageProgress (+1 more)
 
 ### Community 53 - "validate"
 Cohesion: 0.24
 Nodes (7): isObject(), loadPack(), PackRejected, Problems, resolvePackPath(), validate(), validateStep()
 
 ### Community 54 - "selectProvider.ts"
-Cohesion: 0.27
-Nodes (8): DEFAULT_GEMINI_MODEL, GeminiConfig, LlamaCppConfig, ProviderRequest, EMPTY_STUB_SCRIPT, SelectProviderOptions, StubProviderAdapter, StubModelScript
+Cohesion: 0.23
+Nodes (9): DEFAULT_GEMINI_MODEL, GeminiConfig, LlamaCppConfig, ProviderAdapter, EMPTY_STUB_SCRIPT, NullProviderAdapter, SelectProviderOptions, StubProviderAdapter (+1 more)
 
 ### Community 55 - "EnvironmentEditor.ts"
 Cohesion: 0.44
@@ -271,25 +276,37 @@ Nodes (4): Answer, Outcome, Q: How do uploaded images modify the game environmen
 Cohesion: 0.67
 Nodes (3): fitToPlate(), injectAnchors(), plateOf()
 
+### Community 58 - "environment.ts"
+Cohesion: 0.21
+Nodes (9): colors, describeEnvironment(), validateEnvironment(), ProbeImage, image, material, provider, stored (+1 more)
+
+### Community 59 - "three"
+Cohesion: 0.24
+Nodes (8): three, colourFor(), styleAnisotropy(), styleMaterial(), stylesSurface(), PLAYER_BODY_MAX_Y, PLAYER_BODY_MIN_Y, PLAYER_RADIUS
+
+### Community 60 - "main.ts"
+Cohesion: 0.22
+Nodes (9): describe(), FocusProbe, percentile(), PerfResult, QualityProfile, downloadJson(), Event, exportFilename() (+1 more)
+
 ## Knowledge Gaps
-- **214 isolated node(s):** `name`, `private`, `version`, `type`, `dev` (+209 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 341 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **17 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **216 isolated node(s):** `name`, `private`, `version`, `type`, `dev` (+211 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 349 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **19 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `three` connect `LocalProfile.ts` to `MemoryPack.ts`, `layout.ts`, `World.ts`, `proceduralHouse.ts`, `package.json`, `main.ts`, `agent-review.check.ts`, `pack.check.ts`, `telemetry.check.ts`, `ui.ts`?**
-  _High betweenness centrality (0.081) - this node is a cross-community bridge._
-- **Why does `boot()` connect `boot` to `MemoryPack.ts`, `MissionRunner`, `World.ts`, `createProceduralHouse`, `main.ts`, `Player`, `Telemetry`, `State`, `Recorder`, `telemetry.check.ts`, `agent-gemini.check.ts`, `PackVoices`, `Renderer`, `LocalProfile.ts`, `loadMedia`, `ui.ts`, `validate`, `EnvironmentEditor.ts`, `injectAnchors`?**
-  _High betweenness centrality (0.077) - this node is a cross-community bridge._
-- **Why does `MissionRunner` connect `MissionRunner` to `MemoryPack.ts`, `FakeUI`, `boot`, `main.ts`, `pack.check.ts`, `telemetry.check.ts`, `Recorder`?**
-  _High betweenness centrality (0.046) - this node is a cross-community bridge._
-- **Are the 45 inferred relationships involving `boot()` (e.g. with `.activate()` and `.clear()`) actually correct?**
-  _`boot()` has 45 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `boot()` connect `boot` to `MemoryPack.ts`, `MissionRunner`, `World.ts`, `createProceduralHouse`, `Telemetry.ts`, `Player`, `Telemetry`, `State`, `Recorder`, `agent-gemini.check.ts`, `PackVoices`, `Renderer`, `LocalProfile.ts`, `Quality.ts`, `loadMedia`, `ui.ts`, `validate`, `EnvironmentEditor.ts`, `injectAnchors`, `main.ts`?**
+  _High betweenness centrality (0.088) - this node is a cross-community bridge._
+- **Why does `three` connect `three` to `MemoryPack.ts`, `pack.check.ts`, `World.ts`, `proceduralHouse.ts`, `package.json`, `LocalProfile.ts`, `agent-review.check.ts`, `Quality.ts`, `telemetry.check.ts`, `environment.ts`, `main.ts`?**
+  _High betweenness centrality (0.080) - this node is a cross-community bridge._
+- **Why does `MissionRunner` connect `MissionRunner` to `MemoryPack.ts`, `pack.check.ts`, `boot`, `Recorder`, `telemetry.check.ts`, `main.ts`?**
+  _High betweenness centrality (0.045) - this node is a cross-community bridge._
+- **Are the 49 inferred relationships involving `boot()` (e.g. with `.activate()` and `.clear()`) actually correct?**
+  _`boot()` has 49 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `name`, `private`, `version` to the rest of the system?**
-  _214 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _216 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `MemoryPack.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.10344827586206896 - nodes in this community are weakly interconnected._
-- **Should `FakeUI` be split into smaller, more focused modules?**
-  _Cohesion score 0.09523809523809523 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.1010752688172043 - nodes in this community are weakly interconnected._
+- **Should `pack.check.ts` be split into smaller, more focused modules?**
+  _Cohesion score 0.0641025641025641 - nodes in this community are weakly interconnected._
