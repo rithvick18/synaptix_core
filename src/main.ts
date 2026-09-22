@@ -186,7 +186,7 @@ async function boot(): Promise<void> {
    * afterwards, and how far the pixel-ratio ladder may climb.
    */
   const quality = detectQuality(renderer.deviceInfo(), qualityOverrideFromLocation(location.search))
-  console.log('[smriti] quality', quality)
+  console.log('[memoria] quality', quality)
 
   // Both downloads are optional by contract (§1.1); neither can fail the boot.
   const [{ world, report, upgradeTextures }, envReport] = await Promise.all([
@@ -227,7 +227,7 @@ async function boot(): Promise<void> {
     }
   } catch (error) {
     if (!(error instanceof PackRejected)) throw error
-    console.error('[smriti] pack rejected', error.problems)
+    console.error('[memoria] pack rejected', error.problems)
     ui.showRejection(
       `Pack "${error.patientId}" was not loaded`,
       `${error.rejections.length} problem(s) must be fixed before this pack can run. ` +
@@ -235,7 +235,7 @@ async function boot(): Promise<void> {
       error.problems,
       'Fix the pack and reload · <span class="keycap">?patient=</span> chooses a pack'
     )
-    ;(window as unknown as { __smriti: unknown }).__smriti = { world, renderer, ui, rejected: error }
+    ;(window as unknown as { __memoria: unknown }).__memoria = { world, renderer, ui, rejected: error }
     renderOnly(renderer, world)
     return
   }
@@ -247,7 +247,7 @@ async function boot(): Promise<void> {
   const injectionProblems = injectAnchors(world, media)
   const warnings = [...loaded.problems, ...injectionProblems]
   for (const problem of warnings) {
-    console.warn(`[smriti] pack warning · ${problem.where} · ${problem.message}`)
+    console.warn(`[memoria] pack warning · ${problem.where} · ${problem.message}`)
   }
   document.title = `Memoria — ${pack.patient.name}`
 
@@ -261,7 +261,7 @@ async function boot(): Promise<void> {
     // Checkpoint D plugs into the seam B left. The `restart` event is what clears the
     // log (§5.6); `Recorder` handles that, so nothing here has to remember to.
     recorder.record(event)
-    console.log('[smriti]', event.kind, event)
+    console.log('[memoria]', event.kind, event)
     ui.log(describe(event))
     if (event.kind === 'mission_complete') {
       // The level list marks what has been played through at least once this session.
@@ -330,7 +330,7 @@ async function boot(): Promise<void> {
     const doc = buildExport(recorder.log, exportContext())
     const name = exportFilename(loaded.patientId, doc.level.id)
     downloadJson(doc, name)
-    console.log('[smriti] exported', name, doc)
+    console.log('[memoria] exported', name, doc)
     return name
   }
 
@@ -521,7 +521,7 @@ async function boot(): Promise<void> {
   const startLevel = (index: number, spawnAt?: THREE.Vector3): void => {
     const mission = levels[index]
     if (!mission) {
-      console.warn(`[smriti] no level at index ${index}`)
+      console.warn(`[memoria] no level at index ${index}`)
       return
     }
     // Unpause first, so `resume` lands before the boundary the log is cleared on.
@@ -666,7 +666,7 @@ async function boot(): Promise<void> {
       samples.length = 0
       warmup = 0
       perf = null
-      ;(window as unknown as { __smritiPerf: PerfResult | null }).__smritiPerf = null
+      ;(window as unknown as { __memoriaPerf: PerfResult | null }).__memoriaPerf = null
     },
     // The two features would otherwise fight: the upgrade's JPEG decodes and GPU
     // uploads are main-thread work, and a ladder measuring through them reads that
@@ -739,8 +739,8 @@ async function boot(): Promise<void> {
           textureResolution: houseTextures,
           userAgent: navigator.userAgent
         }
-        console.log('[smriti] perf', perf)
-        ;(window as unknown as { __smritiPerf: PerfResult }).__smritiPerf = perf
+        console.log('[memoria] perf', perf)
+        ;(window as unknown as { __memoriaPerf: PerfResult }).__memoriaPerf = perf
       }
     }
 
@@ -849,7 +849,7 @@ async function boot(): Promise<void> {
    * Debug handle — manual verification without needing pointer lock. Inspection only;
    * nothing in the game reads it.
    */
-  ;(window as unknown as { __smriti: unknown }).__smriti = {
+  ;(window as unknown as { __memoria: unknown }).__memoria = {
     world, player, interaction, state, renderer, ui, telemetry,
     pack, media, voices, warnings, patientId: loaded.patientId,
     recorder,
@@ -924,10 +924,10 @@ async function boot(): Promise<void> {
   }
   const publishAssets = (): void => {
     assets.textureResolution = houseTextures as typeof report.textureResolution
-    ;(window as unknown as { __smritiAssets: unknown }).__smritiAssets = assets
+    ;(window as unknown as { __memoriaAssets: unknown }).__memoriaAssets = assets
   }
   publishAssets()
-  console.log('[smriti] assets', assets)
+  console.log('[memoria] assets', assets)
 
   requestAnimationFrame(loop)
 
@@ -943,7 +943,7 @@ async function boot(): Promise<void> {
         if (result.upgraded.length) houseTextures = result.resolution
         assets.upgrade = result
         publishAssets()
-        console.log('[smriti] texture upgrade', result)
+        console.log('[memoria] texture upgrade', result)
         // Only now is the frame time this machine's own, rather than this machine's
         // plus twelve JPEG decodes. The ladder measures from here.
         adaptive.resume()
@@ -1019,7 +1019,7 @@ function describe(event: Event): string {
 }
 
 // Referenced so the dwell threshold is visible next to its only call site in the console.
-;(window as unknown as { __smritiDwellThresholdMs: number }).__smritiDwellThresholdMs =
+;(window as unknown as { __memoriaDwellThresholdMs: number }).__memoriaDwellThresholdMs =
   DWELL_THRESHOLD_MS
 
 boot().catch((err) => {

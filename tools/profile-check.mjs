@@ -57,7 +57,7 @@ async function startServerIfNeeded() {
 
 const server = await startServerIfNeeded()
 
-const profile = mkdtempSync(join(tmpdir(), 'smriti-cdp-'))
+const profile = mkdtempSync(join(tmpdir(), 'memoria-cdp-'))
 const args = [
   '--headless',
   '--disable-gpu',
@@ -156,7 +156,7 @@ try {
     await cdp.send('Page.navigate', { url })
     for (let i = 0; i < 160; i++) {
       await sleep(250)
-      if (await cdp.eval('!!window.__smriti?.debug')) return
+      if (await cdp.eval('!!window.__memoria?.debug')) return
     }
     throw new Error('Boot timed out')
   }
@@ -164,14 +164,14 @@ try {
   const result = await cdp.eval("import('/tools/profile-browser.check.ts').then(m => m.run())", true)
   for (const label of result.checks) console.log('  PASS', label)
   await boot(ORIGIN + '/')
-  const restored = await cdp.eval(`({id:window.__smriti.patientId, wall:window.__smriti.media.anchorTextures.has('livingRoomWall'), levels:window.__smriti.pack.missions.length, recalls:window.__smriti.pack.missions.flatMap(m=>m.steps).filter(s=>s.type==='recall').length})`)
+  const restored = await cdp.eval(`({id:window.__memoria.patientId, wall:window.__memoria.media.anchorTextures.has('livingRoomWall'), levels:window.__memoria.pack.missions.length, recalls:window.__memoria.pack.missions.flatMap(m=>m.steps).filter(s=>s.type==='recall').length})`)
   if (restored.id !== result.id || !restored.wall || restored.levels !== 3 || restored.recalls !== 0) throw new Error('Refresh restoration failed: ' + JSON.stringify(restored))
   console.log('  PASS refresh restores local profile and image across three levels')
-  await cdp.eval("window.__smriti.debug.startLevel(0)")
-  const exported = await cdp.eval('window.__smriti.exportJson()')
+  await cdp.eval("window.__memoria.debug.startLevel(0)")
+  const exported = await cdp.eval('window.__memoria.exportJson()')
   if (exported.patient.name || !exported.content?.profileId || JSON.stringify(exported).includes('blob:') || JSON.stringify(exported).includes('Browser fixture')) throw new Error('Export privacy failed')
   console.log('  PASS export contains opaque identity and content IDs without personal names or media')
-  await cdp.eval("window.__smriti.debug.showLevels(); [...document.querySelectorAll('button')].find(b=>b.textContent==='Edit Profile').click()")
+  await cdp.eval("window.__memoria.debug.showLevels(); [...document.querySelectorAll('button')].find(b=>b.textContent==='Edit Profile').click()")
   const editor = await cdp.eval("!!document.querySelector('#profile-editor[open] canvas')")
   if (!editor) throw new Error('Editor preview missing')
   console.log('  PASS saved profile opens editor with crop preview')
@@ -200,15 +200,15 @@ try {
   await until("document.querySelector('#profile-editor .error').textContent.includes('last successfully saved profile is unchanged')")
   await cdp.eval('IDBObjectStore.prototype.put = window.__profilePut')
   console.log('  PASS failed editor save visibly preserves previous profile')
-  await cdp.eval("window.__smriti = undefined; [...document.querySelectorAll('#profile-editor button')].find(b=>b.textContent==='Save and Play').click()")
-  await until('!!window.__smriti?.debug && window.__smriti.level === 0')
-  if ((await cdp.eval('window.__smriti.patientId')) !== result.id) throw new Error('Save and Play changed profile identity')
+  await cdp.eval("window.__memoria = undefined; [...document.querySelectorAll('#profile-editor button')].find(b=>b.textContent==='Save and Play').click()")
+  await until('!!window.__memoria?.debug && window.__memoria.level === 0')
+  if ((await cdp.eval('window.__memoria.patientId')) !== result.id) throw new Error('Save and Play changed profile identity')
   console.log('  PASS Save and Play reloads saved profile and starts level one')
   await cdp.eval("import('/src/LocalProfile.ts').then(async m=>{const p=(await m.profileStore.read()).profile; p.skipRecall=false; await m.profileStore.save(p)})", true)
   await boot(ORIGIN + '/')
   for (let level = 0; level < 3; level++) {
     const played = await cdp.eval(`(() => {
-      const g=window.__smriti; g.debug.startLevel(${level});
+      const g=window.__memoria; g.debug.startLevel(${level});
       for(let n=0;n<20 && g.runner.active;n++) {
         const s=g.runner.current;
         if(s.type==='recall') document.querySelector('button.choice[data-id="'+s.answer+'"]').click();
@@ -221,17 +221,17 @@ try {
   }
   console.log('  PASS all three personal levels complete with image and caregiver recall, preserving per-attempt exports')
   await cdp.eval(`(() => {
-    const g=window.__smriti; const photo=g.media.resolver.resolve(g.pack.anchors.livingRoomWall, true);
+    const g=window.__memoria; const photo=g.media.resolver.resolve(g.pack.anchors.livingRoomWall, true);
     window.__photoChoices=[{id:'a',name:'A',photoUrl:photo},{id:'b',name:'B',photoUrl:'data:,'},{id:'c',name:'C',photoUrl:photo}];
     g.ui.showAnswerCard({question:'Fallback check',choices:window.__photoChoices,onSelect:()=>{},onSkip:()=>{}})
   })()`)
   await until("document.querySelectorAll('#answer img.portrait').length===0")
-  await cdp.eval('window.__smriti.ui.updateAnswerCard({choices:[window.__photoChoices[0],window.__photoChoices[2]]})')
+  await cdp.eval('window.__memoria.ui.updateAnswerCard({choices:[window.__photoChoices[0],window.__photoChoices[2]]})')
   if ((await cdp.eval("document.querySelectorAll('#answer img.portrait').length")) !== 0) throw new Error('Photo fallback did not survive reduction')
   console.log('  PASS late photo failure switches entire question to text and stays text after choice reduction')
   await cdp.eval("import('/src/LocalProfile.ts').then(m=>m.profileStore.select('raju'))", true)
   await boot(ORIGIN + '/')
-  if ((await cdp.eval('window.__smriti.patientId')) !== 'raju') throw new Error('Demo switch failed')
+  if ((await cdp.eval('window.__memoria.patientId')) !== 'raju') throw new Error('Demo switch failed')
   console.log('  PASS switch to Raju demo restores its pack')
   await cdp.eval("import('/src/LocalProfile.ts').then(m=>m.profileStore.delete())", true)
   const deleted = await cdp.eval("import('/src/LocalProfile.ts').then(m=>m.profileStore.read()).then(r=>!r.profile && r.selected==='mira')", true)

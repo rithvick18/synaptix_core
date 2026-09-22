@@ -449,7 +449,7 @@ export class MissionRunner {
       // defensive rather than routine — but a question with nothing on it must not sit
       // on screen waiting for a click that can never come.
       if (cards.length === 0) {
-        console.warn('[smriti] no renderable choices for this question; skipping the step')
+        console.warn('[memoria] no renderable choices for this question; skipping the step')
         this.endStep('skipped')
         return
       }
@@ -535,7 +535,7 @@ export class MissionRunner {
       } else {
         this.beacon.show(this.deps.world.hintTargets[step.hints.highlight])
         if (!this.deps.world.hintTargets[step.hints.highlight]) {
-          console.warn(`[smriti] hint target missing from world: ${step.hints.highlight}`)
+          console.warn(`[memoria] hint target missing from world: ${step.hints.highlight}`)
         }
       }
       // The pack's own words stay on screen; the added assistance is visual.
@@ -633,7 +633,7 @@ export class MissionRunner {
       const kept = supplied.filter((id) => step.choices.includes(id))
       if (kept.includes(step.answer) && kept.length >= 2) return kept
     }
-    if (supplied) console.warn('[smriti] reducedChoices unusable, reducing deterministically')
+    if (supplied) console.warn('[memoria] reducedChoices unusable, reducing deterministically')
 
     const distractors = step.choices.filter((id) => id !== step.answer)
     if (distractors.length === 0) return [...step.choices]
@@ -669,7 +669,7 @@ export class MissionRunner {
     for (const id of ids) {
       const person = this.people.get(id)
       if (!person) {
-        console.warn(`[smriti] choice id absent from people, dropping it: ${id}`)
+        console.warn(`[memoria] choice id absent from people, dropping it: ${id}`)
         continue
       }
       cards.push({
@@ -689,7 +689,7 @@ export class MissionRunner {
     for (const id of ids) {
       const option = step.options?.find((o) => o.id === id)
       if (!option) {
-        console.warn(`[smriti] choice id absent from options, dropping it: ${id}`)
+        console.warn(`[memoria] choice id absent from options, dropping it: ${id}`)
         continue
       }
       cards.push({

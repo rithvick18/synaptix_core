@@ -664,7 +664,7 @@ text, and that fallback remains in force when hints reduce the choices.
 
 ### Storage and export
 
-IndexedDB database `smriti-caregiver-v1`, object store `profiles`, holds the complete
+IndexedDB database `memoria-caregiver-v1`, object store `profiles`, holds the complete
 local profile under `local` and the selected profile ID under `selected`. Original,
 runtime and thumbnail media are Blobs, never base64 or localStorage entries. A single
 read/write transaction commits metadata, crop settings, media and selection atomically.

@@ -12,7 +12,7 @@
  * this file reads and the config that writes it cannot drift apart.
  */
 
-export const AGENT_STORAGE_KEY = 'smriti-agent-config-v1'
+export const AGENT_STORAGE_KEY = 'memoria-agent-config-v1'
 
 /**
  * True only when a caregiver has explicitly turned the feature on for this browser.

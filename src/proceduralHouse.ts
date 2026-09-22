@@ -1258,7 +1258,7 @@ export async function createProceduralHouse(
   const impassable = doorways.filter((d) => !d.ok)
   if (impassable.length) {
     console.error(
-      '[smriti] impassable or tight doorways:',
+      '[memoria] impassable or tight doorways:',
       impassable.map((d) => `${d.id} ${d.width}m`).join(', ')
     )
   }
@@ -1267,7 +1267,7 @@ export async function createProceduralHouse(
   const cutOff = reachability.filter((r) => r.reachable < 0.98 || r.cornersReached < 4)
   if (cutOff.length) {
     console.warn(
-      '[smriti] rooms with unreachable floor:',
+      '[memoria] rooms with unreachable floor:',
       cutOff.map((r) => `${r.room} ${(r.reachable * 100).toFixed(0)}% corners ${r.cornersReached}/4`).join(', ')
     )
   }

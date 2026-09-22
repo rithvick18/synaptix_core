@@ -75,7 +75,7 @@ export interface InteractableMeta {
   ownBlockers?: THREE.Box3[]
 }
 
-const META_KEY = 'smritiMeta'
+const META_KEY = 'memoriaMeta'
 
 export function tagInteractable(object: THREE.Object3D, meta: InteractableMeta): THREE.Object3D {
   object.userData[META_KEY] = meta

@@ -101,7 +101,7 @@ export function photosOf(p: LocalProfile): Photo[] {
 
 // A transaction replaces the complete profile and selection together. An abort leaves
 // the previous version intact, including originals. No localStorage or base64 media.
-const DB = 'smriti-caregiver-v1'
+const DB = 'memoria-caregiver-v1'
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB, 1)

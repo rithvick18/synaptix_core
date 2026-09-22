@@ -39,7 +39,7 @@ const eq = <T,>(actual: T, expected: T, label: string): void => {
 
 /** The repository root, handed in by `tools/checks/run.mjs`: the bundle runs from a
  *  temp directory, so nothing relative to this file survives the build. */
-const ROOT = process.env.SMRITI_ROOT ?? process.cwd()
+const ROOT = process.env.MEMORIA_ROOT ?? process.cwd()
 
 // ---------------------------------------------------------------------------
 // 1. Recorder — §5.6 resets the event log
@@ -231,7 +231,7 @@ const cleanRun: Event[] = [
     attemptNumber: 1,
     restarts: 2
   })
-  eq(doc.format, 'smriti-telemetry', 'export: tagged format')
+  eq(doc.format, 'memoria-telemetry', 'export: tagged format')
   eq(doc.patient.id, 'mira', 'export: patient id')
   eq(doc.notDiagnostic, NOT_DIAGNOSTIC, '§4.4 the not-diagnostic label travels in the file')
   ok(doc.notDiagnostic.includes('not diagnostic'), '§4.4 the label says "not diagnostic"')
@@ -284,7 +284,7 @@ const cleanRun: Event[] = [
   eq(revealedDoc.level.id, 'familiar-memories', 'export: a level-3 attempt names level 3')
 
   ok(
-    /^smriti-mira-water-\d{4}-\d{2}-\d{2}/.test(exportFilename('mira', 'water')),
+    /^memoria-mira-water-\d{4}-\d{2}-\d{2}/.test(exportFilename('mira', 'water')),
     'export: filename names the patient, the level and the date'
   )
   ok(!exportFilename('mira', 'water').includes(':'), 'export: filename has no colons')

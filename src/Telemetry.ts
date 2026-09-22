@@ -451,7 +451,7 @@ export interface ExportContext {
 }
 
 export interface ExportDocument {
-  format: 'smriti-telemetry'
+  format: 'memoria-telemetry'
   version: 1
   generatedAt: string
   /**
@@ -493,10 +493,10 @@ export function buildExport(events: readonly Event[], context: ExportContext): E
     // Loud, because a blended log makes every number below meaningless. The file is
     // still written: withholding a caregiver's data to punish a bug helps nobody, and
     // `missionIdsInLog` puts the problem on the face of the document.
-    console.error('[smriti] export spans more than one mission id:', inLog)
+    console.error('[memoria] export spans more than one mission id:', inLog)
   }
   return {
-    format: 'smriti-telemetry',
+    format: 'memoria-telemetry',
     version: 1,
     generatedAt: new Date().toISOString(),
     notDiagnostic: NOT_DIAGNOSTIC,
@@ -531,7 +531,7 @@ export function buildExport(events: readonly Event[], context: ExportContext): E
 export function exportFilename(patientId: string, levelId: string | null, at = new Date()): string {
   const stamp = at.toISOString().replace(/[:.]/g, '-').replace(/Z$/, '')
   const level = (levelId ?? 'session').replace(/[^a-z0-9-]/gi, '-')
-  return `smriti-${patientId}-${level}-${stamp}.json`
+  return `memoria-${patientId}-${level}-${stamp}.json`
 }
 
 /** Hands the browser a file. Returns the JSON text, so callers can log or copy it. */
@@ -550,7 +550,7 @@ export function downloadJson(document_: ExportDocument, filename: string): strin
     // click in some browsers and produces an empty file.
     setTimeout(() => URL.revokeObjectURL(url), 0)
   } catch (error) {
-    console.error('[smriti] export failed', error)
+    console.error('[memoria] export failed', error)
   }
   return text
 }

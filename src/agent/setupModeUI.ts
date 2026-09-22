@@ -54,24 +54,24 @@ const START_COMMAND =
   'llama-server -m gemma-3-4b-it-Q4_K_M.gguf --mmproj mmproj-gemma-3-4b-it-f16.gguf --port 8080'
 
 const STYLE = `
-#smriti-setup{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:#102419d9;padding:20px;box-sizing:border-box;font:16px/1.5 system-ui}
-#smriti-setup .sheet{width:min(760px,96vw);max-height:92vh;overflow:auto;box-sizing:border-box;background:#faf6ee;color:#28392f;border-radius:16px;padding:26px}
-#smriti-setup h2{margin:0 0 6px} #smriti-setup h3{margin:0 0 6px;font-size:17px}
-#smriti-setup .lede{margin:0 0 16px}
-#smriti-setup .mode{border:1px solid #c6cdbd;border-radius:10px;padding:15px;margin:12px 0;background:#fffdf7}
-#smriti-setup .mode[data-selected="true"]{border-color:#285a43;box-shadow:0 0 0 2px #285a4333}
-#smriti-setup .mode > label{display:flex;gap:9px;align-items:flex-start;font-weight:600;cursor:pointer}
-#smriti-setup .mode p{margin:8px 0 0}
-#smriti-setup ul{margin:6px 0 0;padding-left:20px} #smriti-setup li{margin:2px 0}
-#smriti-setup .sent{color:#7a3b12} #smriti-setup .not-sent{color:#2c5b3f}
-#smriti-setup code{background:#eef0e6;border-radius:4px;padding:1px 5px;font:13px/1.5 ui-monospace,monospace;word-break:break-all}
-#smriti-setup input[type=text],#smriti-setup input[type=password]{display:block;box-sizing:border-box;width:100%;margin-top:6px;padding:9px;border:1px solid #a6b3a7;border-radius:6px;font:inherit;background:white;color:#243b2c}
-#smriti-setup button{padding:10px 15px;border:1px solid #879b87;background:#e4eddf;color:#203c2d;border-radius:7px;font:inherit;margin:5px 7px 0 0;cursor:pointer}
-#smriti-setup button.primary{background:#285a43;color:white;border-color:#285a43}
-#smriti-setup button[disabled]{opacity:.55;cursor:not-allowed}
-#smriti-setup .error{color:#8d2919;font-weight:600;min-height:1.5em;margin:10px 0 0}
-#smriti-setup footer{margin-top:14px;border-top:1px solid #c6cdbd;padding-top:12px}
-#smriti-setup .foot-note{margin:10px 0 0;font-size:14px;color:#4b5a4f}
+#memoria-setup{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:#102419d9;padding:20px;box-sizing:border-box;font:16px/1.5 system-ui}
+#memoria-setup .sheet{width:min(760px,96vw);max-height:92vh;overflow:auto;box-sizing:border-box;background:#faf6ee;color:#28392f;border-radius:16px;padding:26px}
+#memoria-setup h2{margin:0 0 6px} #memoria-setup h3{margin:0 0 6px;font-size:17px}
+#memoria-setup .lede{margin:0 0 16px}
+#memoria-setup .mode{border:1px solid #c6cdbd;border-radius:10px;padding:15px;margin:12px 0;background:#fffdf7}
+#memoria-setup .mode[data-selected="true"]{border-color:#285a43;box-shadow:0 0 0 2px #285a4333}
+#memoria-setup .mode > label{display:flex;gap:9px;align-items:flex-start;font-weight:600;cursor:pointer}
+#memoria-setup .mode p{margin:8px 0 0}
+#memoria-setup ul{margin:6px 0 0;padding-left:20px} #memoria-setup li{margin:2px 0}
+#memoria-setup .sent{color:#7a3b12} #memoria-setup .not-sent{color:#2c5b3f}
+#memoria-setup code{background:#eef0e6;border-radius:4px;padding:1px 5px;font:13px/1.5 ui-monospace,monospace;word-break:break-all}
+#memoria-setup input[type=text],#memoria-setup input[type=password]{display:block;box-sizing:border-box;width:100%;margin-top:6px;padding:9px;border:1px solid #a6b3a7;border-radius:6px;font:inherit;background:white;color:#243b2c}
+#memoria-setup button{padding:10px 15px;border:1px solid #879b87;background:#e4eddf;color:#203c2d;border-radius:7px;font:inherit;margin:5px 7px 0 0;cursor:pointer}
+#memoria-setup button.primary{background:#285a43;color:white;border-color:#285a43}
+#memoria-setup button[disabled]{opacity:.55;cursor:not-allowed}
+#memoria-setup .error{color:#8d2919;font-weight:600;min-height:1.5em;margin:10px 0 0}
+#memoria-setup footer{margin-top:14px;border-top:1px solid #c6cdbd;padding-top:12px}
+#memoria-setup .foot-note{margin:10px 0 0;font-size:14px;color:#4b5a4f}
 `
 
 function list(parent: Element, className: string, label: string, items: string[]): void {
@@ -94,11 +94,11 @@ function list(parent: Element, className: string, label: string, items: string[]
  */
 export function openSetupScreen(options: SetupScreenOptions): HTMLElement {
   const container = options.container ?? document.body
-  const existing = container.querySelector('#smriti-setup')
+  const existing = container.querySelector('#memoria-setup')
   if (existing) existing.remove()
 
   const root = document.createElement('div')
-  root.id = 'smriti-setup'
+  root.id = 'memoria-setup'
   root.setAttribute('role', 'dialog')
   root.setAttribute('aria-label', 'Choose where the model runs')
 
@@ -157,7 +157,7 @@ export function openSetupScreen(options: SetupScreenOptions): HTMLElement {
     const label = document.createElement('label')
     const radio = document.createElement('input')
     radio.type = 'radio'
-    radio.name = 'smriti-setup-mode'
+    radio.name = 'memoria-setup-mode'
     radio.value = m
     radio.checked = m === mode
     radio.onchange = () => { if (radio.checked) { mode = m; error.textContent = ''; refresh() } }

@@ -51,7 +51,7 @@ if (types.status !== 0) {
   process.exit(1)
 }
 
-const out = mkdtempSync(path.join(tmpdir(), 'smriti-checks-'))
+const out = mkdtempSync(path.join(tmpdir(), 'memoria-checks-'))
 let failed = 0
 
 try {
@@ -80,7 +80,7 @@ try {
     console.log(`\n── ${check} ${'─'.repeat(Math.max(0, 56 - check.length))}`)
     const run = spawnSync(process.execPath, [bundle], {
       stdio: 'inherit',
-      env: { ...process.env, SMRITI_ROOT: root }
+      env: { ...process.env, MEMORIA_ROOT: root }
     })
     if (run.status !== 0) failed++
   }

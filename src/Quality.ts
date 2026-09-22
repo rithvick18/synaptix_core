@@ -44,7 +44,7 @@ export interface DeviceInfo {
 
 export interface QualityProfile {
   tier: QualityTier
-  /** One line naming what decided the tier. Printed to the console and `__smritiAssets`. */
+  /** One line naming what decided the tier. Printed to the console and `__memoriaAssets`. */
   reason: string
   /** What the house loads during boot. Always the cheap one — boot time is not for sale. */
   bootResolution: TextureResolution
@@ -199,7 +199,7 @@ export interface AdaptiveStep {
  * sharpness is a picture that keeps asking to be noticed.
  */
 export class AdaptiveResolution {
-  /** One entry per judged window. `__smritiAssets` carries it, so the climb is visible. */
+  /** One entry per judged window. `__memoriaAssets` carries it, so the climb is visible. */
   readonly steps: AdaptiveStep[] = []
 
   private index = 0

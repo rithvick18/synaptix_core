@@ -61,7 +61,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   redactBeforeSend: true
 }
 
-const STORAGE_KEY = 'smriti-agent-config-v1'
+const STORAGE_KEY = 'memoria-agent-config-v1'
 
 function isAgentProvider(v: unknown): v is AgentProvider {
   return v === 'none' || v === 'stub' || v === 'llama-cpp' || v === 'gemini'

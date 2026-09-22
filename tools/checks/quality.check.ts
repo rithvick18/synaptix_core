@@ -190,7 +190,7 @@ function replay(ladder: number[], costFor: (ratio: number) => number, maxFrames 
   while (!adaptive.settled) adaptive.sample(16.7)
   eq(adaptive.ratio, 2, 'watchdog: the climb reaches the top on a machine that never misses')
   ok(!adaptive.finished, 'watchdog: settled is not finished — it keeps watching')
-  ok(adaptive.steps.length > 0, 'watchdog: every judged window is recorded for __smritiAssets')
+  ok(adaptive.steps.length > 0, 'watchdog: every judged window is recorded for __memoriaAssets')
 
   // Sustained slowness afterwards gives rungs back, two of them, and then stops.
   for (let i = 0; i < 20000 && !adaptive.finished; i++) adaptive.sample(50)

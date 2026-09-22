@@ -81,7 +81,7 @@ how many questions went into each. The per-question values are never replaced by
 they are in `summary.steps[]` in the export.
 
 **Download JSON** on that card — or `J` at any moment — writes
-`smriti-<patient>-<level>-<timestamp>.json` containing the level (id, index, title), the
+`memoria-<patient>-<level>-<timestamp>.json` containing the level (id, index, title), the
 attempt id and number, the pack id, the summary, per-step measures, dwell totals and the
 full event log, with the not-diagnostic label repeated inside the file.
 
@@ -192,7 +192,7 @@ before any of this existed — as is a software rasteriser, which is what
 not choose, or for a GPU that is read wrongly. It can ask for a tier but never for
 anisotropy the driver lacks or a ratio above the display's own. The on-screen readout
 (bottom right) shows the settled ratio, the map size and the anisotropy in use, and
-`window.__smritiAssets` carries the tier, the reason for it, the ladder and every step
+`window.__memoriaAssets` carries the tier, the reason for it, the ladder and every step
 it took.
 
 The HDRI is deliberately still 1k: it is never sampled directly, only prefiltered by
@@ -209,24 +209,24 @@ Verified with all non-localhost requests blocked — see the report in the check
 
 ## Debug handle
 
-`window.__smriti` exposes `{ world, player, interaction, state, renderer, ui, runner,
+`window.__memoria` exposes `{ world, player, interaction, state, renderer, ui, runner,
 level, levels, telemetry, recorder, pack, media, voices, warnings, patientId }` for manual
 verification without pointer lock, plus `summary()`, `exportJson()` and `debug`:
 
-- `__smriti.debug.probeTargets()` — can a player stand somewhere and focus each of the
+- `__memoria.debug.probeTargets()` — can a player stand somewhere and focus each of the
   three find targets? Walks the standable floor, aims from each spot and runs the real
   interaction raycast, reporting the nearest spot that works. `canFocus('radio')` does one.
-- `__smriti.debug.startLevel(1)` — start level 2. `debug.restart()` replays the selected
+- `__memoria.debug.startLevel(1)` — start level 2. `debug.restart()` replays the selected
   level; `debug.showLevels()` returns to the list.
-- `__smriti.debug.restartInRoom('kitchen')` — starts a level with the player already
+- `__memoria.debug.restartInRoom('kitchen')` — starts a level with the player already
   standing in the kitchen, which is how §5.5's containment branch is exercised directly.
-- `__smriti.debug.playVoice('ananya')` — plays one pack voice from the `audioSource`
+- `__memoria.debug.playVoice('ananya')` — plays one pack voice from the `audioSource`
   anchor on demand.
-- `__smriti.debug.showSummary()` / `__smriti.debug.download()` — the summary card and the
+- `__memoria.debug.showSummary()` / `__memoria.debug.download()` — the summary card and the
   JSON file without finishing a level first.
 
-`window.__smritiPerf` holds the §7 measurement once 300 frames have been sampled;
-`window.__smritiAssets` records which downloads succeeded.
+`window.__memoriaPerf` holds the §7 measurement once 300 frames have been sampled;
+`window.__memoriaAssets` records which downloads succeeded.
 
 ## Deployment
 

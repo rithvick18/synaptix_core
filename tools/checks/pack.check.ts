@@ -90,7 +90,7 @@ function eq<T>(actual: T, expected: T, label: string): void {
 
 /** The repository root, handed in by `tools/checks/run.mjs`: the bundle runs from a
  *  temp directory, so nothing relative to this file survives the build. */
-const ROOT = process.env.SMRITI_ROOT ?? process.cwd()
+const ROOT = process.env.MEMORIA_ROOT ?? process.cwd()
 
 function makeWorld(): WorldSource & { room: string | null } {
   const box = (x0: number, z0: number, x1: number, z1: number): THREE.Box3 =>
