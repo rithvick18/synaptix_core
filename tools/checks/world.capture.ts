@@ -4,38 +4,29 @@
  *     node tools/checks/run.mjs --capture
  *
  * Not a check: it writes `__snapshots__/hallway.world.json` and asserts nothing. The
- * committed snapshot is the baseline G1's refactor is compared against, so re-running
- * this is a deliberate act — a hallway geometry change that bumps `templateVersion`
- * (§11.8) — never a way to make a failing comparison pass.
+ * committed snapshot is the baseline G1's refactor was compared against — first
+ * captured, in a commit of its own, from the pre-refactor `createProceduralHouse()`.
+ * Re-running this is a deliberate act — a hallway geometry change that bumps
+ * `templateVersion` (§11.8) — never a way to make a failing comparison pass.
  */
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { SNAPSHOT_PATH, snapshotWorld, stubTextureLoader } from './worldSnapshot'
-
-stubTextureLoader()
-
-const { OPENINGS } = await import('../../src/layout')
-const { createProceduralHouse } = await import('../../src/proceduralHouse')
+import { buildHouse } from '../../src/proceduralHouse'
+import { TEMPLATES } from '../../src/templates'
+import { SNAPSHOT_PATH, snapshotWorld } from './worldSnapshot'
 
 const ROOT = process.env.MEMORIA_ROOT ?? process.cwd()
 
-const { world, report } = await createProceduralHouse()
+const world = buildHouse(TEMPLATES.hallway, { mirror: false })
 const snapshot = {
   meta: {
     template: 'hallway',
+    templateVersion: world.templateVersion,
     mirror: false,
-    source: 'createProceduralHouse() before the G1 template refactor',
+    source: 'buildHouse(hallway, { mirror: false })',
     note: 'Built under node with no textures (the §1.1 offline path). Compared by tools/checks/world.check.ts at epsilon 1e-6.'
   },
-  world: snapshotWorld({
-    world,
-    openings: OPENINGS.map((o) => ({
-      id: o.id, label: o.label, kind: o.arch ? 'arch' : 'door', axis: o.axis, at: o.at,
-      from: o.from, to: o.to, height: o.height, thickness: o.thickness, hinge: o.hinge, swing: o.swing
-    })),
-    doorways: report.doorways,
-    reachability: report.reachability
-  })
+  world: snapshotWorld({ world, openings: world.openings, doorways: world.doorways, reachability: world.reachability })
 }
 
 const out = path.join(ROOT, SNAPSHOT_PATH)

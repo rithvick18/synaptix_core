@@ -67,9 +67,12 @@ point at.
 
 A pack referencing an id absent from the active world is a load-time rejection (§5.2).
 
+Required ids are roles, not specific geometry — see §11.2. Every template in §11 provides
+all of them.
+
 **Required is a floor, not a ceiling.** A world may provide more rooms and more
 interactables than the table lists; a pack may only rely on the ones above.
-`proceduralHouse.ts` currently also provides the rooms `bedroom`, `bathroom` and
+The `hallway` template (§11) currently also provides the rooms `bedroom`, `bathroom` and
 `hallway`, and the interactables `frontDoor`, `bedroomDoor` and `bathroomDoor`.
 
 **Every required interactable must be reachable, and that is measured.** `debug.canFocus`
@@ -99,7 +102,8 @@ front door.
 | `bedroom` | x [-7.5, -1.3], z [-6, 0.8] | hallway door |
 | `bathroom` | x [-7.5, -1.3], z [0.8, 6] | hallway door |
 
-**Everything in `layout.ts` is written relative to the wall constants**, not as absolute
+**Everything in the template (`src/templates/hallway.ts`, §11) is written relative to its
+wall constants**, not as absolute
 coordinates — furniture as offsets from the wall face it stands against, doors as offsets
 from room centres. The house is resized by editing `X0`/`X1`/`Z0`/`Z1` and the dividers;
 the contents follow instead of drifting into the middle of the floor.
@@ -115,8 +119,8 @@ room and kitchen arches have no slab.
 
 Walls are generated from runs plus openings rather than written out segment by segment —
 hand-placed segments are how doorways end up one wall-thickness out of position. Every
-opening is declared once, in `OPENINGS`, and both the wall gaps and the door slabs derive
-from it.
+opening is declared once, in the template's `openings`, and both the wall gaps and the door
+slabs derive from it.
 
 **Doorways are sized against the collider, not against realism.** The player is an
 axis-aligned box of half-width `PLAYER_RADIUS` (0.24 m), not a capsule, so its corners
@@ -207,9 +211,10 @@ src/
 ├── State.ts             exploring | answering | paused | completed
 ├── Player.ts            controller, camera, collision
 ├── World.ts             WorldSource interface + active world
-├── proceduralHouse.ts   default world (Checkpoint A)
+├── proceduralHouse.ts   buildHouse(template, { mirror }) — the one world generator (§11.1)
+├── templates/           §11 house templates: types, mirror, registry, one file per house
 ├── glbHouse.ts          optional, deferred
-├── layout.ts            blockers, triggers, anchors, ids
+├── layout.ts            dimensions every template shares: player collider, walls, ceiling
 ├── Interaction.ts       raycast, distance + occlusion, highlight, prompt
 ├── Missions.ts          step runner
 ├── Telemetry.ts         typed event hooks (B) + recording/export (D)
@@ -530,6 +535,7 @@ arrives while an overlay has the pointer.
 | D | Recording, aggregation, export, summary, offline, recording | Export has all four outcome counts, `answerLatency: null` on revealed steps, `timeToReveal` present; `dist/` runs with the network fully offline; 60 s screen recording exists |
 
 | E | Three levels, level selection, per-attempt export | All three levels play through; the level and task are on screen; the summary offers Replay / Level selection / Next; an export names its level, attempt and pack and covers exactly one attempt; every find target is *measured* reachable (§1) |
+| G | House templates (§11) | Hallway refactor matches the pre-refactor snapshot with zero diffs; four templates × mirror pass every §11.5 audit and all three levels offline; the caregiver picks a template and mirror in the §9 editor, and it persists and appears in the export |
 
 Levels 2 and 3 are the "mission 2" this table anticipated: repeated-navigate steps, and
 multiple questions per mission. The audio-cue step type was not built — see §8.
@@ -574,8 +580,8 @@ report that alongside. Check the cap by timing `requestAnimationFrame` on a blan
 
   | Command | What it does |
   | --- | --- |
-  | `npm run check` | Typechecks the harnesses against `src/`, then runs them headlessly under node — pack validation in both choice formats, the hint ladder, aggregation, level switching |
-  | `npm run check:offline` | Builds nothing; serves `dist/` with the vendored `vite preview` and drives all three levels in headless Chrome with DNS disabled |
+  | `npm run check` | Typechecks the harnesses against `src/`, then runs them headlessly under node — pack validation in both choice formats, the hint ladder, aggregation, level switching, and for every template × mirror the §11.6 snapshot and determinism, the audits, the §11.2 role checks and the §11.3 mirror checks |
+  | `npm run check:offline` | Serves `dist/` with the vendored `vite preview` and, for every registered template × mirror, runs the audits and drives all three levels in headless Chrome with DNS disabled |
   | `npm run build` | `tsc && vite build` |
 
   The offline check typechecks nothing and the unit checks open no browser; both are
@@ -1175,3 +1181,220 @@ offline adapter and remains live. Online mode adds its own standing obligations,
 check: every host other than `generativelanguage.googleapis.com` refused before a socket
 opens; a missing key failing as `no-key` before a socket opens; `consentGiven` reset by any
 change of `setupMode`; and `apiKey` cleared when the mode returns to offline.
+
+---
+
+## 11. House templates
+
+**Decision (2026-09-22), recorded so it is not re-litigated.** LiDAR capture is unavailable.
+A free-form floor-plan editor was rejected: it asks the most of a stressed caregiver, produces
+geometry no audit has seen, and does not change how the house looks. Photoreal reconstruction
+from a few photographs was rejected because it has to invent every part of the home the
+photographs don't show (§2). Instead the caregiver picks the **closest of a small set of
+pre-audited house templates**, and the §9 photographs do the recognition work.
+
+A template does not claim to be the patient's home. It is the closest familiar shape, and
+the caregiver chooses it.
+
+### 11.1 A template is data, not code
+
+A template declares rooms (id, extent), wall runs, `OPENINGS` (kind `door` | `arch`, width,
+hinge side), furniture placements relative to wall faces, anchor mounts, interactable mounts,
+hint-target mounts, spawn, the front door, and the garden/fence extent.
+
+**One generator turns any template into a `WorldSource`**:
+
+```ts
+buildHouse(template: Template, opts: { mirror: boolean }): WorldSource
+```
+
+`proceduralHouse.ts` becomes that generator. The current house becomes the template
+`hallway`, unchanged. Templates live in `src/templates/<id>.ts` and are registered in
+`src/templates/index.ts`. Adding a template means adding a data file; a template change that
+needs generator changes must update this section first.
+
+**As built (G1).** `src/templates/types.ts` defines `Template`. Openings are declared as a
+span (`from`/`to`, so width is `to - from`) with `kind`, `hinge` and `swing`; a wall run is
+cut by every opening on its centreline and inside its span. `buildHouse` returns a
+`HouseWorld`, which *is* a `WorldSource` plus what the checks need — the template id,
+version and orientation, the openings as built, both audit reports, and the open-door
+blocker set. It is synchronous and downloads nothing. `createProceduralHouse(template,
+{ mirror }, …)` is the browser path: it fetches the §1.1 texture sets, then calls
+`buildHouse` with them. `layout.ts` now holds only what every template shares — the player
+collider, wall thicknesses, door and arch heights, the 2.7 m ceiling.
+
+Everything in §1.1 still applies to every template: walls generated from runs plus openings,
+placements relative to wall constants, doorways sized against the collider (1.0 m interior,
+1.1 m front door), and hinged doors that swap one `Box3` blocker by identity.
+
+### 11.2 Required ids are roles, not geometry
+
+Every template must provide every §1 required id. A hint target names a **role**, not a
+particular piece of geometry:
+
+| Role id | Means |
+| --- | --- |
+| `kitchenDoor` | an opening on a route from spawn into `kitchen` — a door or an arch |
+| `livingArch` | an opening on a route from spawn into `livingRoom` — a door or an arch |
+| `kitchenArch` | the opening that **directly** connects `livingRoom` and `kitchen` |
+
+So every template must connect `livingRoom` and `kitchen` directly. Level 2 walks
+living room → kitchen → living room and depends on it. In an open plan with no wall between
+them, `kitchenArch` is a visible threshold marker (a floor strip, or the end of a counter) at
+the boundary between the two room volumes.
+
+**Every hint target must be visibly highlightable.** An empty `Object3D` cannot glow. A role
+with no natural mesh gets a template-declared marker mesh.
+
+**Hint wording must be true in every template.** "The kitchen is through this door" is false
+when `kitchenDoor` is an arch. Bundled level text uses neutral wording ("The kitchen is this
+way"), and `tools/checks/pack.check.ts` runs every bundled level against every template: a
+hint that says *door* fails if its target resolves to an arch in any template. This is the
+§4.5 rule — describe only what exists — applied across templates.
+
+### 11.3 Mirroring
+
+The caregiver may flip any template left-to-right.
+
+- **Mirror in the layout data, before any geometry is built.** Negate x across extents, runs,
+  openings and placements; swap hinge sides; mirror yaws.
+- **Never mirror with a negative scale on the scene graph.** It reverses triangle winding
+  (culling and normals invert), flips which way doors swing, and mirrors the caregiver's
+  photographs and any text.
+- **Photographs, portraits and text are never mirrored.** Checked by comparing anchor
+  texture orientation in the mirrored and unmirrored builds.
+
+**"Mirror yaws" depends on which way the object faces.** A rotation can move an object but
+never reflect it, so what is reflected is the direction the object faces, and the object
+itself stays as built — which is exactly why a photograph on a mirrored wall still reads
+the right way round. Every oriented placement therefore declares the local axis its
+asymmetry lies along (`MirrorAxis` in `types.ts`): an object facing along local Z (a chair,
+the radio) mirrors to `-yaw`; one facing along local X (a picture frame, the jug's handle,
+the toilet's cistern) mirrors to `π - yaw`. Negating every yaw is wrong: the living-room
+frame at yaw π would become -π and face into the wall. `tools/checks/world.check.ts`
+catches that, and catches a negative scale, by standing a camera in front of each picture
+plate in both builds: texture u must run to the viewer's right, v upwards, the plate must
+face the reflected direction, and it must face into the same room.
+
+Doors: an opening on an x-running wall has its span negated, so its ends — and its `hinge`
+label — swap; every door's `swing` reverses.
+
+**The sun is not part of a template and is not mirrored.** Renderer.ts places it at
+(-14, 16, 12). Picture frames do not receive shadows, so in the unmirrored house that sun
+reaches the living-room frame through the wall; mirrored, the frame faces away from it and
+its wood and an empty plate render darker. Photographs are unlit (§9) and are unaffected.
+
+### 11.4 The initial set: four templates
+
+| id | Plan | Notes |
+| --- | --- | --- |
+| `hallway` | Current five rooms around a central hallway | Unchanged — the regression baseline |
+| `row` | Linear: front room → living room → kitchen at the back; bedroom and bathroom along a side passage | |
+| `openPlan` | Living room and kitchen in one space split by a counter or half-wall; bedroom and bathroom off it | `kitchenArch` is a threshold marker |
+| `courtyard` | Rooms around an open central courtyard with a verandah | Loosely based on common Northeast Indian homes; the caregiver picks it as the closest shape, not as an accurate model of their home |
+
+All four fit inside the existing garden fence, use a 2.7 m ceiling, and are single-storey.
+
+### 11.5 Every template × mirror is audited, or it doesn't ship
+
+For each registered template, in both orientations:
+
+- `auditDoorways` and `auditReachability` report clean
+- `canFocus` reaches every required interactable
+- role checks pass: `kitchenArch` directly connects the two rooms; routes exist from spawn
+  into `livingRoom` and `kitchen` through their role openings
+- every hint target is visibly highlightable
+- all three bundled levels play through in `npm run check:offline`
+- frame time is measured per template under §7's rules, or reported as "unmeasured"
+
+**If any template fails any audit, the build fails.** A failing template cannot be shipped
+by quietly leaving it out of the registry.
+
+### 11.6 Determinism and the regression snapshot
+
+- `buildHouse` is deterministic: the same `(template, mirror)` produces identical blockers,
+  triggers, anchors, interactables, hint targets and spawn, every time.
+- Before G1 refactors anything, a snapshot of the current world is captured and committed.
+  After the refactor, `buildHouse(hallway, { mirror: false })` must match it with zero diffs
+  (float epsilon 1e-6). The refactor is proven not to have moved anything.
+- The snapshot is `tools/checks/__snapshots__/hallway.world.json`, captured in its own
+  commit before any world code changed, by `node tools/checks/run.mjs --capture`. It holds
+  blockers, triggers, anchor / interactable / hint-target world transforms and bounds,
+  spawn, openings, door hinges, both audits, and every drawable scene node's geometry,
+  material and world matrix — so "looks the same" is compared too, not only "collides the
+  same". Re-capturing is for a deliberate geometry change that bumps `templateVersion`.
+- A mirrored build must be the exact reflection of the unmirrored one: blockers, triggers,
+  spawn and every anchor, interactable and hint target, and identical doorway widths and
+  reachability. Blockers are compared as a set, matched one-to-one: an x-running wall cut
+  by an opening emits its segments in increasing x, so mirroring reverses their order in
+  the list, and nothing reads that order.
+
+### 11.7 Caregiver picker (in the §9 editor)
+
+- A **Choose your home's layout** step shows four cards. Each card has a top-down plan
+  thumbnail **drawn from the template data itself**, not a hand-made image, so the preview can
+  never drift from the world. Each also has a one-line plain description and a mirror toggle
+  that updates the thumbnail live.
+- The local profile stores `templateId` and `mirrored`. The defaults are `hallway`,
+  unmirrored.
+- Changing the template never touches photographs, crops, people or questions.
+- The Mira and Raju demo packs stay on `hallway`, except under a `?template=` dev override.
+  `?template=<id>&mirror=1` selects a registered template (only `mirror=1` mirrors); an
+  unregistered id falls back to `hallway` with a console warning rather than failing the
+  boot, and `window.__memoriaAssets.template` says which house was actually built.
+- **The §10 agent does not choose or propose a template.** Guessing a home's layout from its
+  photographs is guessing a fact about the home (§10.4). The caregiver picks.
+- Room relabelling is OUT: no screen shows room names today.
+
+### 11.8 Telemetry
+
+- Exports gain `world: { templateId, mirrored, templateVersion }`.
+- `templateVersion` is bumped whenever a template's geometry changes.
+- **Attempts are only comparable within the same `templateId` + `mirrored` + `templateVersion`.**
+  A different house is a different task, and §4.4's own-baseline rule depends on the task
+  staying the same. The fields must exist so a reader can check.
+- `templateId` is not caregiver content, so it is permitted in local exports under §9's
+  privacy rules.
+
+### 11.9 OUT
+
+Free-form floor-plan editor · LiDAR or scan capture · photoreal reconstruction · per-home
+geometry edits · more than four templates until the four ship · multiple storeys · room
+relabelling · the agent choosing a template.
+
+### 11.10 Recorded deviations
+
+§8 requires every request to end with any deviation from this document. The ones from
+building G1 (the template refactor and mirroring, 2026-09-22):
+
+**G1-1 — Bundled hint text is not yet neutral.** §11.2 states bundled level text uses
+neutral wording. It does not: level 1's navigate hint says "through this door" (Mira) and
+"This is the kitchen door" (Raju), and levels 2 and 3 say "through this archway". Both are
+true in `hallway`, the only registered template. The check §11.2 asks for is built —
+`pack.check.ts` runs every bundled level against every registered template and fails a hint
+that calls a door an arch or an arch a door — so the first template that makes
+`kitchenDoor` an arch or `livingArch` a door will fail `npm run check` until the text is
+neutralised. Patient-facing text was left unchanged in G1 on purpose.
+
+**G1-2 — `kitchenArch` was not a required hint target in code.** §1 always listed it;
+`REQUIRED_HINT_TARGETS` in `World.ts` did not, so `assertWorldContract` never checked it.
+It does now. `hallway` always provided it, so nothing changed at runtime.
+
+**G1-3 — `buildHouse` returns more than a `WorldSource`, and takes more than `mirror`.**
+§11.1 gives `buildHouse(template, { mirror }): WorldSource`. The return type is `HouseWorld`,
+which extends `WorldSource`; the options also accept prebuilt materials and the §9
+environment style, both optional. Every caller that wants a `WorldSource` still gets one.
+
+**G1-4 — The offline check plays the levels by notifying the runner, not by walking.**
+§11.5's "all three bundled levels play through" is met the way `check:offline` has always
+met it: `restartInRoom` exercises real containment, then steps complete by
+`notifyRoom` / `notifyInteract`. That the rooms are walkable in each orientation is proven
+separately — both audits, the §11.2 route checks, and `canFocus` on every find target with
+the real raycast — not by a scripted walk.
+
+**G1-5 — Frame time is unmeasured per template.** §11.5 requires it measured under §7 or
+reported as unmeasured. It is unmeasured for `hallway · mirrored`. Headless Chrome renders
+on SwiftShader, which §7 does not accept as the figure. A byte-identical pixel comparison
+of six viewpoints before and after the refactor (headless, offline, not committed) is
+evidence that the unmirrored draw workload is unchanged. It is not a frame-time
+measurement.

@@ -176,52 +176,43 @@ const consoleErrors = []
 const pageErrors = []
 let checks = 0
 const failures = []
+/** Which template × mirror the assertions below belong to; prefixed onto each label. */
+let prefix = ''
 const ok = (condition, label, detail = '') => {
   checks++
-  if (!condition) failures.push(label + (detail ? `\n     ${detail}` : ''))
+  if (!condition) failures.push(prefix + label + (detail ? `\n     ${detail}` : ''))
 }
 
-try {
-  const cdp = await CDP.connect(await targetUrl())
-
-  cdp.on('Network.requestWillBeSent', (p) => {
-    requests.set(p.requestId, { url: p.request.url, status: null, failed: null, type: p.type })
-  })
-  cdp.on('Network.responseReceived', (p) => {
-    const entry = requests.get(p.requestId)
-    if (entry) {
-      entry.status = p.response.status
-      entry.fromCache = p.response.fromDiskCache
-      entry.mime = p.response.mimeType
-    }
-  })
-  cdp.on('Network.loadingFailed', (p) => {
-    const entry = requests.get(p.requestId)
-    if (entry) entry.failed = p.errorText
-  })
-  cdp.on('Runtime.consoleAPICalled', (p) => {
-    if (p.type === 'error') {
-      consoleErrors.push(p.args.map((a) => a.value ?? a.description ?? '').join(' '))
-    }
-  })
-  cdp.on('Runtime.exceptionThrown', (p) => {
-    pageErrors.push(p.exceptionDetails.exception?.description ?? p.exceptionDetails.text)
-  })
-
-  await cdp.send('Network.enable')
-  await cdp.send('Runtime.enable')
-  await cdp.send('Page.enable')
-
-  await cdp.send('Page.navigate', { url: ORIGIN + '/' })
-
+/** Navigates to `path` on ORIGIN and waits for the app to boot. */
+async function navigateAndBoot(cdp, path) {
+  await cdp.eval('delete window.__memoria').catch(() => {})
+  await cdp.send('Page.navigate', { url: ORIGIN + path })
   // Wait for boot: the debug handle only exists once the pack has loaded and the loop
-  // has been scheduled, so its presence is the real "the app is up" signal.
-  let booted = false
+  // has been scheduled, so its presence is the real "the app is up" signal. The old
+  // page's handle is cleared first, so a slow navigation cannot be mistaken for a boot.
+  await sleep(250)
   for (let i = 0; i < 120; i++) {
     await sleep(250)
-    booted = await cdp.eval('typeof window.__memoria === "object" && !!window.__memoria?.debug')
-    if (booted) break
+    const up = await cdp.eval('typeof window.__memoria === "object" && !!window.__memoria?.debug').catch(() => false)
+    if (up) return true
   }
+  return false
+}
+
+/**
+ * Loads one template × mirror and runs every check against it: the offline asset
+ * policy, both audits, the reachability probe (the real `canFocus`) and all three
+ * levels played through. §11.5: a template that fails in either orientation fails the
+ * whole check.
+ */
+async function runConfig(cdp, config) {
+  prefix = `[${config.id}${config.mirror ? ' · mirrored' : ''}] `
+  console.log(`\n━━ ${config.id}${config.mirror ? ' · mirrored' : ''} ${'━'.repeat(50)}`)
+  requests.clear()
+  consoleErrors.length = 0
+  pageErrors.length = 0
+
+  const booted = await navigateAndBoot(cdp, `/?template=${encodeURIComponent(config.id)}&mirror=${config.mirror ? 1 : 0}`)
   ok(booted, 'the app boots with the network disabled', 'window.__memoria.debug never appeared')
 
   if (booted) {
@@ -267,10 +258,23 @@ try {
       '§1.1 every Poly Haven texture set falls back offline',
       `failed: ${parsedAssets.texturesFailed.join(', ')}`
     )
+    // --- §11.5 this is the house asked for, and both audits are clean ----------
+    const house = parsedAssets.template
+    ok(
+      house?.id === config.id && house?.mirrored === config.mirror,
+      '§11 the house built is the template and orientation the URL asked for',
+      JSON.stringify(house)
+    )
     const doorways = await cdp.eval(
       'JSON.stringify(window.__memoriaAssets.doorways.filter(d => !d.ok))'
     )
-    ok(doorways === '[]', '§1.1 every doorway is still passable with no textures', doorways)
+    ok(doorways === '[]', '§1.1 auditDoorways: every doorway is still passable with no textures', doorways)
+    const cutOff = await cdp.eval(
+      'JSON.stringify(window.__memoriaAssets.reachability.filter(r => r.reachable < 0.98 || r.cornersReached < 4))'
+    )
+    ok(cutOff === '[]', '§1.1 auditReachability: every room reachable, all four corners', cutOff)
+    console.log('  doorways:', parsedAssets.doorways.map((d) => `${d.id} ${d.width.toFixed(2)}`).join(' · '))
+    console.log('  reachability:', parsedAssets.reachability.map((r) => `${r.room} ${(r.reachable * 100).toFixed(0)}%/${r.cornersReached}c`).join(' · '))
 
     // --- the pack loaded from the local server ------------------------------
     const patient = await cdp.eval('window.__memoria.pack.patient.name')
@@ -571,6 +575,55 @@ try {
   for (const r of local.sort((a, b) => a.url.localeCompare(b.url))) {
     console.log(`    ${String(r.status).padStart(3)}  ${r.type.padEnd(8)}  ${r.url.replace(ORIGIN, '')}`)
   }
+}
+try {
+  const cdp = await CDP.connect(await targetUrl())
+
+  cdp.on('Network.requestWillBeSent', (p) => {
+    requests.set(p.requestId, { url: p.request.url, status: null, failed: null, type: p.type })
+  })
+  cdp.on('Network.responseReceived', (p) => {
+    const entry = requests.get(p.requestId)
+    if (entry) {
+      entry.status = p.response.status
+      entry.fromCache = p.response.fromDiskCache
+      entry.mime = p.response.mimeType
+    }
+  })
+  cdp.on('Network.loadingFailed', (p) => {
+    const entry = requests.get(p.requestId)
+    if (entry) entry.failed = p.errorText
+  })
+  cdp.on('Runtime.consoleAPICalled', (p) => {
+    if (p.type === 'error') {
+      consoleErrors.push(p.args.map((a) => a.value ?? a.description ?? '').join(' '))
+    }
+  })
+  cdp.on('Runtime.exceptionThrown', (p) => {
+    pageErrors.push(p.exceptionDetails.exception?.description ?? p.exceptionDetails.text)
+  })
+
+  await cdp.send('Network.enable')
+  await cdp.send('Runtime.enable')
+  await cdp.send('Page.enable')
+
+  // §11.5 — every registered template, both ways round. The registry is read from
+  // the app itself, so this list cannot fall out of step with src/templates/index.ts.
+  const defaultBooted = await navigateAndBoot(cdp, '/')
+  ok(defaultBooted, 'the app boots with the network disabled', 'window.__memoria.debug never appeared')
+  const registry = defaultBooted ? await cdp.eval('window.__memoriaTemplates') : []
+  const defaultHouse = defaultBooted ? await cdp.eval('JSON.stringify(window.__memoriaAssets.template)') : null
+  console.log('  registered templates:', JSON.stringify(registry), '· default house:', defaultHouse)
+  ok(Array.isArray(registry) && registry.length > 0, '§11.1 the template registry is published', JSON.stringify(registry))
+  ok(
+    defaultHouse !== null && JSON.parse(defaultHouse).id === 'hallway' && JSON.parse(defaultHouse).mirrored === false,
+    '§11.7 with no override the demo plays the hallway house, unmirrored',
+    defaultHouse
+  )
+  const configs = (registry ?? []).flatMap((id) => [false, true].map((mirror) => ({ id, mirror })))
+  for (const config of configs) await runConfig(cdp, config)
+  prefix = ''
+  console.log(`\n  played ${configs.length} template × mirror configuration(s): ${configs.map((c) => `${c.id}${c.mirror ? '·mirrored' : ''}`).join(', ')}`)
 } finally {
   chrome.kill()
   server?.kill()

@@ -35,6 +35,7 @@ import { agentConfigStore, needsSetup, type AgentConfig } from './agent/config'
 import { describeSetup, openSetupScreen } from './agent/setupModeUI'
 import { assertWorldContract } from './World'
 import { createProceduralHouse } from './proceduralHouse'
+import { TEMPLATES, templateFromLocation } from './templates'
 
 /**
  * SPEC.md §3 — entry and game loop.
@@ -188,9 +189,15 @@ async function boot(): Promise<void> {
   const quality = detectQuality(renderer.deviceInfo(), qualityOverrideFromLocation(location.search))
   console.log('[memoria] quality', quality)
 
+  // §11 — which house. The demos and the local profile are all on the default template
+  // until the §9 editor offers a choice; `?template=<id>&mirror=1` overrides it for
+  // development and for the offline check, which plays every template both ways round.
+  const house = templateFromLocation(location.search)
+  if (house.problem) console.warn(`[memoria] ${house.problem}`)
+
   // Both downloads are optional by contract (§1.1); neither can fail the boot.
   const [{ world, report, upgradeTextures }, envReport] = await Promise.all([
-    createProceduralHouse(progress, activeProfile?.environment, {
+    createProceduralHouse(house.template, { mirror: house.mirror }, progress, activeProfile?.environment, {
       resolution: quality.bootResolution,
       anisotropy: quality.anisotropy
     }),
@@ -922,6 +929,9 @@ async function boot(): Promise<void> {
     resolutionSteps: adaptive.steps,
     upgrade: null as unknown
   }
+  // The registry, so the offline check can enumerate every template × mirror (§11.5)
+  // without a second list of ids to keep in step with this one.
+  ;(window as unknown as { __memoriaTemplates: string[] }).__memoriaTemplates = Object.keys(TEMPLATES)
   const publishAssets = (): void => {
     assets.textureResolution = houseTextures as typeof report.textureResolution
     ;(window as unknown as { __memoriaAssets: unknown }).__memoriaAssets = assets

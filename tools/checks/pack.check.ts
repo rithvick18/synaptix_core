@@ -66,6 +66,7 @@ import { MissionRunner, type MemoryPack, type Mission } from '../../src/Missions
 import type { ChoiceCard } from '../../src/ui'
 import { Telemetry, type Event, type Outcome } from '../../src/Telemetry'
 import type { WorldSource } from '../../src/World'
+import { TEMPLATES } from '../../src/templates'
 
 // ---------------------------------------------------------------------------
 // Assertions
@@ -222,6 +223,32 @@ for (const id of ['mira', 'raju']) {
           `${id}/${mission.id}: hint target "${step.hints.highlight}" is in the contract`
         )
       }
+    }
+  }
+
+  // --- §11.2: hint wording is true in every template ---------------------------
+  //
+  // A role id names an opening that may be a door in one template and an arch in
+  // another. "Through this door" pointed at an arch describes something that is not
+  // there, which is §4.5's rule broken by a template rather than by a pack.
+  for (const template of Object.values(TEMPLATES)) {
+    for (const mission of pack!.missions) {
+      mission.steps.forEach((step, index) => {
+        const opening = template.openings.find((o) => o.id === step.hints.highlight)
+        if (!opening) return
+        const text = [
+          'instruction' in step ? step.instruction : '',
+          step.hints.repeat,
+          step.hints.guide
+        ].join(' ')
+        const wrong = opening.kind === 'arch' ? /\bdoors?(way)?s?\b/i : /\barch(way)?(es|s)?\b/i
+        ok(
+          !wrong.test(text),
+          `§11.2 ${id}/${mission.id} step ${index + 1}: in "${template.id}" ${opening.id} is ${
+            opening.kind === 'arch' ? 'an arch' : 'a door'
+          }, and the hint does not call it otherwise — "${text.match(wrong)?.[0] ?? ''}"`
+        )
+      })
     }
   }
 }

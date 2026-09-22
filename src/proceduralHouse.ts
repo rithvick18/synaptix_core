@@ -2,44 +2,28 @@ import type { EnvironmentStyle } from './agent/environment'
 import { styleAnisotropy, styleMaterial, stylesSurface } from './EnvironmentMaterials'
 import type { TextureResolution } from './Quality'
 import * as THREE from 'three'
-import {
-  ARCHES,
-  AUDIO_SOURCE_ANCHOR,
-  BEDSIDE_FRAME_ANCHOR,
-  BEDSIDE_FRAME_YAW,
-  CEILING_HEIGHT,
-  CHAIRS,
-  DOORS,
-  FURNITURE,
-  JUG_POSITION,
-  LAMPS,
-  LIVING_ROOM_WALL_ANCHOR,
-  LIVING_ROOM_WALL_YAW,
-  OPENINGS,
-  PLANTS,
-  PLAYER_BODY_MAX_Y,
-  PLAYER_BODY_MIN_Y,
-  PLAYER_RADIUS,
-  PROPS,
-  ROOMS,
-  SPAWN_LOOK_AT,
-  SPAWN_POSITION,
-  TABLES,
-  TREES,
-  WALLS,
-  WINDOWS,
-  type ChairSpec,
-  type DoorSpec,
-  type OpeningSpec,
-  type SolidSpec,
-  type Surface,
-  type WindowSpec
-} from './layout'
+import { CEILING_HEIGHT, PLAYER_BODY_MAX_Y, PLAYER_BODY_MIN_Y, PLAYER_RADIUS } from './layout'
+import { mirrorTemplate } from './templates/mirror'
+import type {
+  ChairSpec,
+  OpeningSpec,
+  RoomSpec,
+  SolidSpec,
+  Surface,
+  TableSpec,
+  Template,
+  WallRunSpec,
+  WindowSpec
+} from './templates/types'
 import { tagInteractable, type WorldSource } from './World'
 import type { StageProgress } from './ui'
 
 /**
- * SPEC.md §1.1 — the default world, built from primitives.
+ * SPEC.md §1.1 / §11.1 — the house generator.
+ *
+ * `buildHouse` turns any template (`src/templates/`) into a `WorldSource`, built from
+ * primitives. Mirroring (§11.3) is applied to the template's data before anything is
+ * built, so nothing here knows or cares which way round the house is.
  *
  * §1.1's degradation contract governs every download here: textures are fetched with a
  * timeout and the house falls back to flat `MeshStandardMaterial`s; the HDRI is handled
@@ -101,6 +85,8 @@ export interface HouseBuildReport {
   anisotropy: number
   doorways: DoorwayReport[]
   reachability: ReachabilityReport[]
+  /** Which house this is (§11): template id, geometry version, and whether mirrored. */
+  template: { id: string; version: number; mirrored: boolean }
 }
 
 export interface HouseOptions {
@@ -191,7 +177,12 @@ function scaleBoxUV(geo: THREE.BufferGeometry, sx: number, sy: number, sz: numbe
   uv.needsUpdate = true
 }
 
-class Materials {
+/**
+ * The surfaces a house is dressed in. Built by `createProceduralHouse` from whatever
+ * texture sets downloaded; `buildHouse` without one uses flat colours throughout, which
+ * is exactly §1.1's offline fallback.
+ */
+export class Materials {
   private cache = new Map<Surface, THREE.MeshStandardMaterial>()
   constructor(
     private sets: Map<Surface, MapTriplet | null>,
@@ -286,6 +277,44 @@ function simpleBox(
 }
 
 // ---------------------------------------------------------------------------
+// Walls
+// ---------------------------------------------------------------------------
+
+/**
+ * Expands a run into full-height segments between its openings, plus a non-blocking
+ * lintel over each opening. Writing the segments by hand is how doorways end up
+ * one wall-thickness out of place.
+ *
+ * A run is cut by every opening declared on its centreline and inside its span, so an
+ * opening is declared once and the gap follows it — mirrored or not.
+ */
+function expandWall(run: WallRunSpec, openings: readonly OpeningSpec[]): SolidSpec[] {
+  const out: SolidSpec[] = []
+  const half = run.thickness / 2
+  const box = (from: number, to: number, y0: number, y1: number, suffix: string, blocking = true): void => {
+    if (to - from < 1e-4) return
+    const min: [number, number, number] =
+      run.axis === 'x' ? [from, y0, run.at - half] : [run.at - half, y0, from]
+    const max: [number, number, number] =
+      run.axis === 'x' ? [to, y1, run.at + half] : [run.at + half, y1, to]
+    out.push({ id: `${run.id}-${suffix}`, min, max, surface: run.surface, blocking })
+  }
+
+  const cuts = openings
+    .filter((o) => o.axis === run.axis && o.at === run.at && o.from >= run.from && o.to <= run.to)
+    .sort((a, b) => a.from - b.from)
+  let cursor = run.from
+  cuts.forEach((op, i) => {
+    box(cursor, op.from, 0, CEILING_HEIGHT, `seg${i}`)
+    // Above head height, so it can block nothing and occlude nothing.
+    box(op.from, op.to, op.height, CEILING_HEIGHT, `lintel${i}`, false)
+    cursor = op.to
+  })
+  box(cursor, run.to, 0, CEILING_HEIGHT, 'segN')
+  return out
+}
+
+// ---------------------------------------------------------------------------
 // Doors
 // ---------------------------------------------------------------------------
 
@@ -312,7 +341,7 @@ class Door {
   private baseYaw: number
 
 
-  constructor(readonly spec: DoorSpec, mats: Materials) {
+  constructor(readonly spec: OpeningSpec, mats: Materials) {
     const width = spec.to - spec.from
     const slabW = width - 0.02
     const slabT = Math.min(spec.thickness - 0.02, 0.06)
@@ -396,7 +425,7 @@ class Door {
 }
 
 /** Trim around a door or archway, so an opening reads as a framed one. */
-function buildTrim(spec: DoorSpec, mats: Materials): THREE.Object3D {
+function buildTrim(spec: OpeningSpec, mats: Materials): THREE.Object3D {
   const group = new THREE.Group()
   group.name = `${spec.id}-trim`
   const t = 0.07
@@ -452,7 +481,7 @@ function buildWaterJug(mats: Materials): THREE.Object3D {
   return group
 }
 
-function buildTable(spec: (typeof TABLES)[number], mats: Materials): THREE.Object3D {
+function buildTable(spec: TableSpec, mats: Materials): THREE.Object3D {
   const group = new THREE.Group()
   group.name = spec.id
   const w = spec.max[0] - spec.min[0]
@@ -780,10 +809,11 @@ function passableWidth(blockers: THREE.Box3[], o: OpeningSpec, radius: number): 
  * own width is impassable; anything under ~0.7 m is passable but unpleasant.
  */
 export function auditDoorways(
+  openings: readonly OpeningSpec[],
   blockers: THREE.Box3[],
   doors: Map<string, Door>
 ): DoorwayReport[] {
-  return OPENINGS.map((o) => {
+  return openings.map((o) => {
     const door = doors.get(o.id)
     const consider = blockers.filter((b) => b !== door?.blocker)
     if (door) consider.push(door.openBox)
@@ -810,6 +840,7 @@ export interface ReachabilityReport {
  * cut off from the rest of the house.
  */
 export function auditReachability(
+  rooms: readonly RoomSpec[],
   blockers: THREE.Box3[],
   doors: Map<string, Door>,
   spawn: THREE.Vector3
@@ -858,7 +889,7 @@ export function auditReachability(
     }
   }
 
-  return ROOMS.map((room) => {
+  return rooms.map((room) => {
     let openCells = 0
     let reached = 0
     for (let i = 0; i < nx; i++) {
@@ -902,60 +933,53 @@ export function auditReachability(
 // Build
 // ---------------------------------------------------------------------------
 
-export async function createProceduralHouse(
-  onProgress?: StageProgress,
-  environment?: EnvironmentStyle,
-  options: HouseOptions = {}
-): Promise<{ world: WorldSource; report: HouseBuildReport; upgradeTextures: (to: TextureResolution) => Promise<UpgradeReport> }> {
-  const resolution = options.resolution ?? '1k'
-  const anisotropy = options.anisotropy ?? 4
+/**
+ * What `buildHouse` returns: a `WorldSource`, plus what the audits and the checks need
+ * to know about how it was built.
+ */
+export interface HouseWorld extends WorldSource {
+  readonly templateId: string
+  /** §11.8 — the template's geometry version. */
+  readonly templateVersion: number
+  readonly mirrored: boolean
+  /** The openings as built — already mirrored when `mirrored` is set. */
+  readonly openings: readonly OpeningSpec[]
+  readonly doorways: DoorwayReport[]
+  readonly reachability: ReachabilityReport[]
+  /**
+   * The blockers with every door swung open: the floor both audits walk. A fresh array
+   * each call, holding each door's open volume in place of its live blocker.
+   */
+  openBlockers(): THREE.Box3[]
+}
+
+export interface BuildOptions {
+  /** §11.3 — flip the template left-to-right, in its data, before anything is built. */
+  mirror: boolean
+  /** The surfaces to dress it in. Omitted: flat colours, as if every download failed. */
+  materials?: Materials
+  /** Read here only for the ceiling lights' colour; surfaces read it through `materials`. */
+  environment?: EnvironmentStyle
+}
+
+/**
+ * SPEC.md §11.1 — the one generator. Turns any template into a `WorldSource`.
+ *
+ * Synchronous, and deterministic (§11.6): the same `(template, mirror)` builds identical
+ * blockers, triggers, anchors, interactables, hint targets and spawn every time. Nothing
+ * here downloads anything — that is `createProceduralHouse`'s job — so the checks can
+ * build every template under node.
+ */
+export function buildHouse(template: Template, opts: BuildOptions): HouseWorld {
+  const t = opts.mirror ? mirrorTemplate(template) : template
+  const environment = opts.environment
+  const mats = opts.materials ?? new Materials(new Map())
+  if (t.openings.find((o) => o.id === t.frontDoor)?.kind !== 'door') {
+    throw new Error(`Template "${t.id}": frontDoor "${t.frontDoor}" is not one of its doors`)
+  }
+
   const root = new THREE.Group()
   root.name = 'proceduralHouse'
-
-  const loader = new THREE.TextureLoader()
-  loader.setCrossOrigin('anonymous')
-
-  const texturesLoaded: string[] = []
-  const texturesFailed: string[] = []
-  const sets = new Map<Surface, MapTriplet | null>()
-
-  const surfaces = Object.keys(TEXTURE_SET) as Surface[]
-  // Three maps per set — diffuse, roughness, normal. The denominator is known before
-  // the first request, which is the whole reason this can be an honest count.
-  const textureTotal = surfaces.length * 3
-  let textureDone = 0
-  let textureFailed = 0
-  onProgress?.('textures', 0, 0, textureTotal)
-
-  await Promise.all(
-    surfaces.map(async (surface) => {
-      const { name } = TEXTURE_SET[surface]!
-      try {
-        sets.set(
-          surface,
-          await loadSet(loader, name, { resolution, anisotropy }, (fileOk) => {
-            if (fileOk) textureDone++
-            else textureFailed++
-            onProgress?.('textures', textureDone, textureFailed, textureTotal)
-          })
-        )
-        texturesLoaded.push(name)
-      } catch {
-        // Degradation contract: flat colour, keep going, never block the load.
-        sets.set(surface, null)
-        texturesFailed.push(name)
-      }
-    })
-  )
-
-  // A set that failed early leaves its siblings' requests unsettled; report the stage as
-  // finished rather than leaving the count short of its own denominator.
-  onProgress?.('textures', textureDone, textureTotal - textureDone, textureTotal)
-  // Geometry from here on: no downloads, so no counts. The stage exists because the
-  // audits below take visible time on a slow machine and silence looks like a hang.
-  onProgress?.('house', 0, 0, 0)
-
-  const mats = new Materials(sets, environment, anisotropy)
   const blockers: THREE.Box3[] = []
 
   // ---- Ground, floors, ceilings ----
@@ -966,7 +990,7 @@ export async function createProceduralHouse(
   ground.name = 'ground'
   root.add(ground)
 
-  for (const room of ROOMS) {
+  for (const room of t.rooms) {
     const w = room.max[0] - room.min[0]
     const d = room.max[2] - room.min[2]
     const cx = (room.min[0] + room.max[0]) / 2
@@ -1020,8 +1044,9 @@ export async function createProceduralHouse(
     }
   }
 
-  // ---- Walls and furniture ----
-  for (const spec of [...WALLS, ...FURNITURE]) {
+  // ---- Walls, furniture, porch and fence ----
+  const walls = t.walls.flatMap((run) => expandWall(run, t.openings))
+  for (const spec of [...walls, ...t.furniture, ...t.exterior, ...t.garden.fence]) {
     // `invisible` specs are blockers only — props whose visible form is built from
     // primitives further down (the toilet).
     if (!spec.invisible) {
@@ -1034,7 +1059,7 @@ export async function createProceduralHouse(
     }
   }
 
-  for (const spec of TABLES) {
+  for (const spec of t.tables) {
     root.add(buildTable(spec, mats))
     blockers.push(new THREE.Box3(
       new THREE.Vector3(spec.min[0], 0, spec.min[1]),
@@ -1042,7 +1067,7 @@ export async function createProceduralHouse(
     ))
   }
 
-  for (const spec of CHAIRS) {
+  for (const spec of t.chairs) {
     root.add(buildChair(spec, mats))
     blockers.push(new THREE.Box3(
       new THREE.Vector3(spec.at[0] - 0.25, 0, spec.at[1] - 0.25),
@@ -1050,9 +1075,9 @@ export async function createProceduralHouse(
     ))
   }
 
-  for (const spec of WINDOWS) root.add(buildWindow(spec, mats, 0.24))
+  for (const spec of t.windows) root.add(buildWindow(spec, mats, 0.24))
 
-  for (const spec of PLANTS) {
+  for (const spec of t.plants) {
     const plant = buildPlant(mats, spec.scale)
     plant.position.set(spec.at[0], 0, spec.at[1])
     plant.name = spec.id
@@ -1063,7 +1088,7 @@ export async function createProceduralHouse(
     ))
   }
 
-  for (const spec of TREES) {
+  for (const spec of t.garden.trees) {
     const tree = buildTree(mats, spec.scale)
     tree.position.set(spec.at[0], 0, spec.at[1])
     tree.name = spec.id
@@ -1074,7 +1099,7 @@ export async function createProceduralHouse(
     ))
   }
 
-  for (const spec of LAMPS) {
+  for (const spec of t.lamps) {
     const lamp = buildLamp(mats)
     lamp.position.set(spec.at[0], 0, spec.at[1])
     lamp.name = spec.id
@@ -1085,9 +1110,10 @@ export async function createProceduralHouse(
     ))
   }
 
-  for (const spec of PROPS) {
+  for (const spec of t.props) {
     const prop = buildProp(spec.kind, mats)
     prop.position.set(...spec.at)
+    if (spec.yaw !== undefined) prop.rotation.y = spec.yaw
     prop.name = spec.id
     root.add(prop)
   }
@@ -1096,7 +1122,8 @@ export async function createProceduralHouse(
   const interactables: Record<string, THREE.Object3D> = {}
   const hintTargets: Record<string, THREE.Object3D> = {}
 
-  for (const spec of DOORS) {
+  for (const spec of t.openings) {
+    if (spec.kind !== 'door') continue
     const door = new Door(spec, mats)
     doors.set(spec.id, door)
     root.add(door.pivot, buildTrim(spec, mats))
@@ -1115,7 +1142,8 @@ export async function createProceduralHouse(
 
   // An arch has no slab to open, so it is never an interactable — but it is the thing
   // to point at when the step is "go to the living room", which has no door of its own.
-  for (const spec of ARCHES) {
+  for (const spec of t.openings) {
+    if (spec.kind !== 'arch') continue
     const trim = buildTrim(spec, mats)
     root.add(trim)
     hintTargets[spec.id] = trim
@@ -1123,17 +1151,16 @@ export async function createProceduralHouse(
 
   // ---- Interactables and anchors ----
   const jug = buildWaterJug(mats)
-  jug.position.set(...JUG_POSITION)
-  // Handle turned to the player's right on approach, so it reads in silhouette.
-  jug.rotation.y = Math.PI
+  jug.position.set(...t.mounts.waterJug.at)
+  jug.rotation.y = t.mounts.waterJug.yaw
   tagInteractable(jug, { id: 'water-jug', label: 'water jug', verb: () => 'Look at' })
   root.add(jug)
   interactables['water-jug'] = jug
   hintTargets['water-jug'] = jug
 
   const livingRoomWall = buildFrameAnchor(0.95, 0.7, mats)
-  livingRoomWall.position.set(...LIVING_ROOM_WALL_ANCHOR)
-  livingRoomWall.rotation.y = LIVING_ROOM_WALL_YAW
+  livingRoomWall.position.set(...t.mounts.livingRoomWall.at)
+  livingRoomWall.rotation.y = t.mounts.livingRoomWall.yaw
   livingRoomWall.name = 'anchor:livingRoomWall'
   root.add(livingRoomWall)
   // The same object is both a personalisation anchor and something the player walks up
@@ -1149,15 +1176,14 @@ export async function createProceduralHouse(
   hintTargets['wall-photo'] = livingRoomWall
 
   const eventFrame = buildFrameAnchor(0.95, 0.7, mats)
-  eventFrame.position.copy(livingRoomWall.position)
-  eventFrame.position.z += 1.2
-  eventFrame.rotation.copy(livingRoomWall.rotation)
+  eventFrame.position.set(...t.mounts.eventFrame.at)
+  eventFrame.rotation.y = t.mounts.eventFrame.yaw
   eventFrame.name = 'anchor:eventFrame'
   root.add(eventFrame)
 
   const bedsideFrame = buildFrameAnchor(0.2, 0.26, mats)
-  bedsideFrame.position.set(BEDSIDE_FRAME_ANCHOR[0], BEDSIDE_FRAME_ANCHOR[1] + 0.17, BEDSIDE_FRAME_ANCHOR[2])
-  bedsideFrame.rotation.y = BEDSIDE_FRAME_YAW
+  bedsideFrame.position.set(...t.mounts.bedsideFrame.at)
+  bedsideFrame.rotation.y = t.mounts.bedsideFrame.yaw
   bedsideFrame.name = 'anchor:bedsideFrame'
   root.add(bedsideFrame)
 
@@ -1173,8 +1199,8 @@ export async function createProceduralHouse(
    * comes in, which is what "recognisable, not beautiful" (§1.1) has to mean when a
    * step says "can you find the radio?".
    *
-   * The player approaches from lower z — the unit stands against the south wall — so
-   * the front of the set is its -Z face.
+   * The front of the set is its local -Z face; the template's mount turns it to face
+   * the way the player comes in.
    */
   const audioSource = new THREE.Group()
   audioSource.name = 'anchor:audioSource'
@@ -1214,7 +1240,8 @@ export async function createProceduralHouse(
   handle.position.set(0, 0.18, 0)
   audioSource.add(handle)
   for (const part of [radio, grille, dial, scale, handle]) part.castShadow = true
-  audioSource.position.set(...AUDIO_SOURCE_ANCHOR)
+  audioSource.position.set(...t.mounts.audioSource.at)
+  audioSource.rotation.y = t.mounts.audioSource.yaw
   root.add(audioSource)
   // Likewise the radio: it is the `audioSource` anchor the pack's voices play from, and
   // it is also a findable object. "Look at", not "Switch on" — E does not operate it,
@@ -1224,16 +1251,23 @@ export async function createProceduralHouse(
   hintTargets['radio'] = audioSource
 
   // ---- World ----
-  const triggers = ROOMS.map((r) => ({
+  const triggers = t.rooms.map((r) => ({
     room: r.id,
     box: new THREE.Box3(new THREE.Vector3(...r.min), new THREE.Vector3(...r.max))
   }))
 
-  const spawnPos = new THREE.Vector3(...SPAWN_POSITION)
+  const spawnPos = new THREE.Vector3(...t.spawn.position)
+  const [lookX, lookZ] = t.spawn.lookAt
   // Camera forward is -Z at yaw 0, so yaw = atan2(-dx, -dz).
-  const yaw = Math.atan2(-(SPAWN_LOOK_AT[0] - spawnPos.x), -(SPAWN_LOOK_AT[1] - spawnPos.z))
+  const yaw = Math.atan2(-(lookX - spawnPos.x), -(lookZ - spawnPos.z))
 
-  const world: WorldSource = {
+  const openBlockers = (): THREE.Box3[] => {
+    // Doors count as open: a shut door is not a permanent obstacle.
+    const live = new Set([...doors.values()].map((d) => d.blocker))
+    return [...blockers.filter((b) => !live.has(b)), ...[...doors.values()].map((d) => d.openBox)]
+  }
+
+  const world: HouseWorld = {
     root,
     blockers,
     triggers,
@@ -1243,7 +1277,7 @@ export async function createProceduralHouse(
     spawn: { position: spawnPos, yaw },
     roomOf(point: THREE.Vector3): string | null {
       // Containment, not entry (§1). Declaration order breaks the doorway overlaps.
-      for (const t of triggers) if (t.box.containsPoint(point)) return t.room
+      for (const trigger of triggers) if (trigger.box.containsPoint(point)) return trigger.room
       return null
     },
     update(dt: number): boolean {
@@ -1251,10 +1285,79 @@ export async function createProceduralHouse(
       // Every door is stepped; `some` would short-circuit and freeze the rest.
       for (const door of doors.values()) if (door.update(dt)) moved = true
       return moved
-    }
+    },
+    templateId: t.id,
+    templateVersion: t.version,
+    mirrored: opts.mirror,
+    openings: t.openings,
+    doorways: auditDoorways(t.openings, blockers, doors),
+    reachability: auditReachability(t.rooms, blockers, doors, spawnPos),
+    openBlockers
   }
+  return world
+}
 
-  const doorways = auditDoorways(blockers, doors)
+/**
+ * Downloads the texture sets, then builds `template` with them (§1.1: every download
+ * is optional, and a failed one leaves that surface a flat colour).
+ */
+export async function createProceduralHouse(
+  template: Template,
+  build: { mirror: boolean },
+  onProgress?: StageProgress,
+  environment?: EnvironmentStyle,
+  options: HouseOptions = {}
+): Promise<{ world: HouseWorld; report: HouseBuildReport; upgradeTextures: (to: TextureResolution) => Promise<UpgradeReport> }> {
+  const resolution = options.resolution ?? '1k'
+  const anisotropy = options.anisotropy ?? 4
+
+  const loader = new THREE.TextureLoader()
+  loader.setCrossOrigin('anonymous')
+
+  const texturesLoaded: string[] = []
+  const texturesFailed: string[] = []
+  const sets = new Map<Surface, MapTriplet | null>()
+
+  const surfaces = Object.keys(TEXTURE_SET) as Surface[]
+  // Three maps per set — diffuse, roughness, normal. The denominator is known before
+  // the first request, which is the whole reason this can be an honest count.
+  const textureTotal = surfaces.length * 3
+  let textureDone = 0
+  let textureFailed = 0
+  onProgress?.('textures', 0, 0, textureTotal)
+
+  await Promise.all(
+    surfaces.map(async (surface) => {
+      const { name } = TEXTURE_SET[surface]!
+      try {
+        sets.set(
+          surface,
+          await loadSet(loader, name, { resolution, anisotropy }, (fileOk) => {
+            if (fileOk) textureDone++
+            else textureFailed++
+            onProgress?.('textures', textureDone, textureFailed, textureTotal)
+          })
+        )
+        texturesLoaded.push(name)
+      } catch {
+        // Degradation contract: flat colour, keep going, never block the load.
+        sets.set(surface, null)
+        texturesFailed.push(name)
+      }
+    })
+  )
+
+  // A set that failed early leaves its siblings' requests unsettled; report the stage as
+  // finished rather than leaving the count short of its own denominator.
+  onProgress?.('textures', textureDone, textureTotal - textureDone, textureTotal)
+  // Geometry from here on: no downloads, so no counts. The stage exists because the
+  // audits below take visible time on a slow machine and silence looks like a hang.
+  onProgress?.('house', 0, 0, 0)
+
+  const mats = new Materials(sets, environment, anisotropy)
+  const world = buildHouse(template, { mirror: build.mirror, materials: mats, environment })
+  const { doorways, reachability } = world
+
   const impassable = doorways.filter((d) => !d.ok)
   if (impassable.length) {
     console.error(
@@ -1263,7 +1366,6 @@ export async function createProceduralHouse(
     )
   }
 
-  const reachability = auditReachability(blockers, doors, spawnPos)
   const cutOff = reachability.filter((r) => r.reachable < 0.98 || r.cornersReached < 4)
   if (cutOff.length) {
     console.warn(
@@ -1313,7 +1415,10 @@ export async function createProceduralHouse(
   onProgress?.('house', 1, 0, 0)
   return {
     world,
-    report: { texturesLoaded, texturesFailed, textureResolution: resolution, anisotropy, doorways, reachability },
+    report: {
+      texturesLoaded, texturesFailed, textureResolution: resolution, anisotropy, doorways, reachability,
+      template: { id: world.templateId, version: world.templateVersion, mirrored: world.mirrored }
+    },
     upgradeTextures
   }
 }
